@@ -228,6 +228,12 @@
   .btn-cancel { flex: 1; background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 13px; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer; font-family: 'Syne', sans-serif; }
   .btn-save { flex: 2; background: var(--accent2); border: none; color: #fff; padding: 13px; border-radius: 10px; font-size: 14px; font-weight: 700; cursor: pointer; font-family: 'Syne', sans-serif; }
 
+  /* Cerrar sector */
+  .btn-cerrar-sector { width:100%; background:transparent; border:2px solid var(--accent); color:var(--accent); border-radius:var(--radius); padding:14px; font-size:14px; font-weight:700; font-family:'Syne',sans-serif; cursor:pointer; transition:background .2s; margin-top:4px; }
+  .btn-cerrar-sector:active { background:rgba(0,212,170,.1); }
+  .btn-cerrar-sector:disabled { opacity:.3; cursor:not-allowed; }
+  .sector-cerrado-badge { display:flex; align-items:center; gap:8px; padding:12px 16px; background:rgba(0,212,170,.06); border-top:1px solid rgba(0,212,170,.2); font-size:12px; color:var(--accent); font-family:'DM Mono',monospace; }
+
   /* Cerrar ruta */
   .cerrar-ruta-section { padding: 16px; }
   .btn-cerrar-ruta { width: 100%; background: transparent; border: 2px solid var(--accent); color: var(--accent); border-radius: var(--radius); padding: 16px; font-size: 15px; font-weight: 700; font-family: 'Syne', sans-serif; cursor: pointer; transition: background .2s; }
@@ -326,6 +332,12 @@
   </div>
   <div class="nc-form">
 
+    <!-- Aclaración modo manual -->
+    <div id="nc-manual-aclaracion" style="display:none;background:rgba(255,165,2,.08);border:1px solid var(--warn);border-radius:var(--radius);padding:14px;font-size:13px;color:var(--warn);line-height:1.6;">
+      ⚑ <strong>Hallazgo no listado</strong><br>
+      <span style="color:var(--muted);">Usá este formulario para registrar algo que no está en la lista de puntos de inspección. Foto, observación y plano son opcionales pero se recomienda incluir al menos uno.</span>
+    </div>
+
     <!-- FOTOS -->
     <div class="form-section">
       <div class="form-section-title">
@@ -420,6 +432,21 @@
     <button class="btn-guardar-nc" id="btn-guardar-nc" onclick="guardarNC()" disabled>
       Guardar no conformidad
     </button>
+
+    <!-- Panel post-guardado: decisión siguiente paso -->
+    <div id="panel-post-nc" style="display:none;">
+      <div style="background:var(--surface);border:1px solid var(--accent);border-radius:var(--radius);padding:18px;text-align:center;">
+        <div style="font-size:13px;color:var(--accent);font-family:'DM Mono',monospace;margin-bottom:14px;">✓ NC guardada correctamente</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <button onclick="nuevaNCEnPunto()" style="background:rgba(255,71,87,.1);border:2px solid var(--danger);color:var(--danger);border-radius:var(--radius);padding:14px;font-size:13px;font-weight:700;font-family:'Syne',sans-serif;cursor:pointer;">
+            ⚠ Nueva NC<br><span style="font-size:11px;font-weight:400;">en este punto</span>
+          </button>
+          <button onclick="siguientePuntoDesdeNC()" style="background:rgba(0,212,170,.1);border:2px solid var(--accent);color:var(--accent);border-radius:var(--radius);padding:14px;font-size:13px;font-weight:700;font-family:'Syne',sans-serif;cursor:pointer;">
+            → Siguiente<br><span style="font-size:11px;font-weight:400;">punto</span>
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -464,6 +491,10 @@ let state = {
   planoMarcado: null,    // dataUrl con marcas
   planoMarcadoOk: false,
   fotoMarcandoIdx: 0,
+  modoManual: false,
+  sectoresCerrados: {},  // key: area|sector|subsector → fecha/hora cierre
+  ultimaPorSubsector: {}, // key: area|sector|subsector → { fecha, inspector }
+  ultimaPorSubsectorGlobal: {},
   // canvas
   canvasHistory: [],
   isDrawing: false,
@@ -553,6 +584,14 @@ async function loadHome() {
 
 function renderHomeCards(data) {
   const grid = document.getElementById('routes-grid');
+  // Guardar ultimaPorSubsector globalmente
+  state.ultimaPorSubsectorGlobal = {};
+  ['EST','MEQ'].forEach(tipo => {
+    if (data[tipo]?.ultimaPorSubsector) {
+      state.ultimaPorSubsectorGlobal[tipo] = data[tipo].ultimaPorSubsector;
+    }
+  });
+
   const rutas = [
     { tipo: 'EST', label: 'Ruta Estructural',          icon: '🏗️', cls: 'est' },
     { tipo: 'MEQ', label: 'Ruta Máquinas y Equipos',   icon: '⚙️', cls: 'meq' },
@@ -627,6 +666,7 @@ async function openRuta(tipoRuta, idRuta) {
     hideToast();
     state.plantilla = plantR.data || [];
     state.avance    = avR.data?.puntos || [];
+    state.ultimaPorSubsector = state.ultimaPorSubsectorGlobal?.[tipoRuta] || {};
     renderRutaContent();
   } catch(e) { showToast('Error al cargar ruta', 'err'); }
 }
@@ -672,11 +712,24 @@ function renderRutaContent() {
       const sav = avanceMap[sk] || { total: puntos.length, tocados: 0 };
       const spct = sav.total > 0 ? Math.round((sav.tocados / sav.total) * 100) : 0;
       const chipCls = spct === 100 ? 'done' : spct > 0 ? 'partial' : '';
+
+      // Última inspección del subsector (de rutas anteriores)
+      // Agrupar subsectores únicos dentro del sector
+      const subsectores = [...new Set(puntos.map(p => p.Subsector))];
+      const subsectorInfo = subsectores.map(sub => {
+        const key = area + '|' + sector + '|' + sub;
+        const ultima = state.ultimaPorSubsector && state.ultimaPorSubsector[key];
+        return ultima
+          ? `<div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${sub}: ${ultima.fecha} — ${ultima.inspector}</div>`
+          : '';
+      }).join('');
+
       return `
         <div class="sector-item" onclick="openSector('${area}', '${sector}')">
-          <div>
+          <div style="flex:1;">
             <div class="sector-name">${sector}</div>
             <div class="sector-sub">${sav.tocados}/${sav.total} puntos</div>
+            ${subsectorInfo}
           </div>
           <div class="sector-right">
             <span class="pct-chip ${chipCls}">${spct}%</span>
@@ -768,6 +821,11 @@ function renderPuntos() {
 
   let html = '';
   Object.entries(grupos).forEach(([subsector, puntos]) => {
+    // Buscar si hay hallazgos no listados ya registrados para este subsector
+    const noListados = state.avance.filter(p =>
+      p.Area === area && p.Sector === sector && p.Subsector === subsector && p.Punto === '⚑ Hallazgo no listado'
+    );
+
     const items = puntos.sort((a,b) => Number(a.Orden) - Number(b.Orden)).map(p => {
       const dotCls = p.estado === 'conforme' ? 'conforme' : p.estado === 'nc' ? 'nc' : 'pendiente';
       const dotIcon = p.estado === 'conforme' ? '✓' : p.estado === 'nc' ? p.cantNC : '○';
@@ -784,10 +842,71 @@ function renderPuntos() {
       `;
     }).join('');
 
+    // Hallazgos no listados ya registrados
+    const noListadosHtml = noListados.map(p => `
+      <div class="punto-item nc" onclick="openPunto('${p.Area}','${p.Sector}','${p.Subsector}','${encodeURIComponent(p.Punto)}','${p.Orden}')">
+        <div>
+          <div class="punto-nombre" style="color:var(--warn);">⚑ Hallazgo no listado</div>
+          <div class="punto-info">${p.cantNC} registro(s)</div>
+        </div>
+        <div class="estado-dot nc"><span class="nc-count">${p.cantNC}</span></div>
+      </div>
+    `).join('');
+
+    // Botón registrar hallazgo no listado
+    const btnNoListado = `
+      <div style="padding:10px 12px;border-top:1px dashed var(--border);">
+        <button onclick="abrirNCManual('${area}','${sector}','${subsector}')"
+          style="width:100%;background:transparent;border:1px dashed var(--warn);color:var(--warn);
+                 border-radius:10px;padding:10px 14px;font-size:12px;font-weight:600;
+                 font-family:'Syne',sans-serif;cursor:pointer;display:flex;align-items:center;
+                 justify-content:center;gap:8px;">
+          ＋ Registrar hallazgo no listado
+          <span style="font-size:10px;font-weight:400;color:var(--muted);">para algo fuera de la lista</span>
+        </button>
+      </div>
+    `;
+
+    // Verificar si el sector está cerrado
+    const sectorCerrado = state.sectoresCerrados &&
+      state.sectoresCerrados[area + '|' + sector + '|' + subsector];
+
+    // Última inspección de rutas anteriores
+    const keySubsector = area + '|' + sector + '|' + subsector;
+    const ultimaInsp = state.ultimaPorSubsector && state.ultimaPorSubsector[keySubsector];
+
+    // Verificar si todos los puntos del subsector están marcados
+    const totalPuntos = puntos.length;
+    const marcados = puntos.filter(p => p.estado !== 'pendiente').length;
+    const todosCompletos = marcados === totalPuntos;
+
+    // Badge de cerrado o botón cerrar
+    const cierreHtml = sectorCerrado
+      ? `<div class="sector-cerrado-badge">
+           <span style="flex:1;">✓ Sector cerrado — ${sectorCerrado}</span>
+           <button onclick="nuevaInspeccionSubsector('${area}','${sector}','${subsector}')"
+             style="background:rgba(0,153,255,.15);border:1px solid var(--accent2);color:var(--accent2);
+                    border-radius:8px;padding:6px 12px;font-size:11px;font-weight:700;
+                    font-family:'Syne',sans-serif;cursor:pointer;">
+             + Nueva inspección
+           </button>
+         </div>`
+      : `<div style="padding:10px 12px;border-top:1px solid var(--border);">
+           ${ultimaInsp ? `<div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;margin-bottom:8px;">Última: ${ultimaInsp.fecha} — ${ultimaInsp.inspector}</div>` : ''}
+           <button class="btn-cerrar-sector" ${!todosCompletos ? 'disabled' : ''}
+             onclick="cerrarSector('${area}','${sector}','${subsector}')">
+             ${todosCompletos ? '✓ Cerrar sector' : `✓ Cerrar sector (${marcados}/${totalPuntos} completados)`}
+           </button>
+           ${!todosCompletos ? `<div style="font-size:11px;color:var(--muted);text-align:center;margin-top:6px;font-family:'DM Mono',monospace;">Completá todos los puntos para cerrar el sector</div>` : ''}
+         </div>`;
+
     html += `
       <div class="subsector-group">
         <div class="subsector-header">${subsector}</div>
         ${items}
+        ${noListadosHtml}
+        ${btnNoListado}
+        ${cierreHtml}
       </div>
     `;
   });
@@ -795,9 +914,122 @@ function renderPuntos() {
   content.innerHTML = html;
 }
 
+// ── Nueva inspección en subsector cerrado ──
+function nuevaInspeccionSubsector(area, sector, subsector) {
+  const msg = `Iniciar nueva inspección en:\n${subsector} — ${sector}\n\nLa inspección anterior queda archivada.\n¿Confirmar?`;
+  if (!confirm(msg)) return;
+
+  // Resetear puntos del subsector en el estado local
+  state.avance = state.avance.map(p => {
+    if (p.Area === area && p.Sector === sector && p.Subsector === subsector) {
+      return { ...p, estado: 'pendiente', cantNC: 0 };
+    }
+    return p;
+  });
+
+  // Quitar el cierre local
+  const key = area + '|' + sector + '|' + subsector;
+  if (state.sectoresCerrados) delete state.sectoresCerrados[key];
+
+  showToast('Nueva inspección iniciada', 'ok');
+  renderPuntos();
+}
+
 // ══════════════════════════════════════════════════════
-// PUNTO DETALLE
+// CERRAR SECTOR
 // ══════════════════════════════════════════════════════
+async function cerrarSector(area, sector, subsector) {
+  const puntosSector = state.avance.filter(p =>
+    p.Area === area && p.Sector === sector && p.Subsector === subsector &&
+    p.Punto !== '⚑ Hallazgo no listado'
+  );
+  const conformes = puntosSector.filter(p => p.estado === 'conforme').length;
+  const conNC     = puntosSector.filter(p => p.estado === 'nc').length;
+  const total     = puntosSector.length;
+
+  const msg = `Cerrar sector: ${subsector}\n\n✓ Conformes: ${conformes}\n⚠ Con NC: ${conNC}\nTotal: ${total}\n\n¿Confirmar cierre?`;
+  if (!confirm(msg)) return;
+
+  // Guardar cierre en Sheets — usamos marcarConforme con punto especial
+  showToast('Cerrando sector...', 'load', 0);
+  try {
+    const ahora = new Date().toLocaleString('es-PY', { timeZone: 'America/Asuncion' });
+    const r = await api('marcarConforme', {
+      idRuta:    state.rutaActiva.idRuta,
+      area,
+      sector,
+      subsector,
+      punto:     '✓ SECTOR CERRADO',
+      orden:     9999,
+      legajo:    state.inspector.Legajo
+    });
+    hideToast();
+    if (!r.ok) { showToast(r.error || 'Error', 'err'); return; }
+
+    // Guardar localmente
+    if (!state.sectoresCerrados) state.sectoresCerrados = {};
+    state.sectoresCerrados[area + '|' + sector + '|' + subsector] = ahora;
+
+    showToast('✓ Sector cerrado', 'ok');
+    renderPuntos();
+  } catch(e) { showToast('Error de conexión', 'err'); }
+}
+
+// ── Abrir NC manual (hallazgo no listado) ──
+function abrirNCManual(area, sector, subsector) {
+  const p = {
+    Area: area, Sector: sector, Subsector: subsector,
+    Punto: '⚑ Hallazgo no listado',
+    Orden: 999, estado: 'pendiente', cantNC: 0
+  };
+  // Buscar si ya tiene registros previos
+  const prev = state.avance.find(x =>
+    x.Area === area && x.Sector === sector && x.Subsector === subsector && x.Punto === '⚑ Hallazgo no listado'
+  );
+  if (prev) p.cantNC = prev.cantNC;
+  state.puntoActual = prev || p;
+
+  document.getElementById('nc-header-title').textContent = 'Hallazgo no listado';
+  document.getElementById('nc-header-sub').textContent = subsector + ' — ' + sector;
+
+  // Reset form
+  state.foto1 = null; state.foto1DataUrl = null; state.foto1Marcada = null;
+  state.foto2 = null; state.foto2DataUrl = null; state.foto2Marcada = null;
+  state.planoMarcado = null; state.planoMarcadoOk = false;
+  document.getElementById('nc-obs').value = '';
+  document.getElementById('canvas-foto-section').style.display = 'none';
+  document.getElementById('btn-guardar-nc').style.display = 'block';
+  document.getElementById('btn-guardar-nc').disabled = true;
+  document.getElementById('panel-post-nc').style.display = 'none';
+  resetSlot(1); resetSlot(2);
+
+  // Hacer todo opcional — quitar badges de requerido
+  state.modoManual = true;
+
+  cargarPlano();
+  checkValidationManual();
+  showScreen('screen-nc');
+
+  // Mostrar aclaración
+  const aclaracion = document.getElementById('nc-manual-aclaracion');
+  if (aclaracion) aclaracion.style.display = 'block';
+}
+
+function checkValidationManual() {
+  // En modo manual todo es opcional — solo habilitar si hay al menos algo
+  const fotoOk  = !!(state.foto1DataUrl || state.foto1Marcada);
+  const obsOk   = document.getElementById('nc-obs').value.trim().length > 0;
+  const planoOk = state.planoMarcadoOk;
+
+  setVal('foto',  fotoOk);
+  setVal('obs',   obsOk);
+  setVal('plano', planoOk);
+
+  // Habilitar si hay al menos uno
+  document.getElementById('btn-guardar-nc').disabled = !(fotoOk || obsOk || planoOk);
+}
+
+// ── Abrir punto detalle ──
 async function openPunto(area, sector, subsector, punto, orden) {
   const p = state.avance.find(x =>
     x.Area === area && x.Sector === sector && x.Subsector === subsector && x.Punto === punto
@@ -902,6 +1134,7 @@ async function marcarConforme() {
 // ══════════════════════════════════════════════════════
 function abrirFormNC() {
   const p = state.puntoActual;
+  state.modoManual = false;
   // Reset form
   state.foto1 = null; state.foto1DataUrl = null; state.foto1Marcada = null;
   state.foto2 = null; state.foto2DataUrl = null; state.foto2Marcada = null;
@@ -911,6 +1144,13 @@ function abrirFormNC() {
   document.getElementById('nc-header-sub').textContent = p.Punto + ' · ' + p.Subsector;
   document.getElementById('nc-obs').value = '';
   document.getElementById('canvas-foto-section').style.display = 'none';
+  document.getElementById('btn-guardar-nc').style.display = 'block';
+  document.getElementById('btn-guardar-nc').disabled = true;
+  document.getElementById('panel-post-nc').style.display = 'none';
+
+  // Ocultar aclaración manual
+  const aclaracion = document.getElementById('nc-manual-aclaracion');
+  if (aclaracion) aclaracion.style.display = 'none';
 
   // Reset slots
   resetSlot(1); resetSlot(2);
@@ -1149,6 +1389,7 @@ function setupPlanoEvents(canvas) {
 
 // ── Validación ──
 function checkValidation() {
+  if (state.modoManual) { checkValidationManual(); return; }
   const fotoOk  = !!(state.foto1DataUrl || state.foto1Marcada);
   const obsOk   = document.getElementById('nc-obs').value.trim().length > 3;
   const planoOk = state.planoMarcadoOk;
@@ -1212,7 +1453,7 @@ async function guardarNC() {
 
     if (!r.ok) { showToast(r.error || 'Error al guardar', 'err'); btn.disabled=false; btn.textContent='Guardar no conformidad'; return; }
 
-    showToast('✓ NC guardada — avanzando al siguiente punto', 'ok');
+    showToast('✓ No conformidad guardada', 'ok');
 
     // Actualizar estado local
     const nuevaCantNC = ncsPrevias.length;
@@ -1225,13 +1466,11 @@ async function guardarNC() {
     });
     actualizarAvanceLocal(p.Area, p.Sector, p.Subsector, p.Punto, 'nc', nuevaCantNC, extras);
     state.puntoActual = { ...state.puntoActual, estado: 'nc', cantNC: nuevaCantNC, ...extras };
-    // Avanzar al siguiente punto pendiente
-    const siguiente = getSiguientePendiente(p);
-    if (siguiente) {
-      setTimeout(() => openPunto(siguiente.Area, siguiente.Sector, siguiente.Subsector, siguiente.Punto, siguiente.Orden), 1200);
-    } else {
-      setTimeout(() => { goPuntos(); renderPuntos(); }, 1200);
-    }
+
+    // Mostrar panel de decisión
+    document.getElementById('btn-guardar-nc').style.display = 'none';
+    document.getElementById('panel-post-nc').style.display = 'block';
+    document.getElementById('panel-post-nc').scrollIntoView({ behavior: 'smooth', block: 'center' });
   } catch(e) {
     showToast('Error al guardar: ' + e.message, 'err');
     btn.disabled=false; btn.textContent='Guardar no conformidad';
@@ -1244,6 +1483,38 @@ async function subirFotoAPI(dataUrl, nombre) {
   const r = await api('subirFoto', { base64, nombre, mimeType });
   if (!r.ok) throw new Error('Error al subir foto: ' + (r.error || ''));
   return r.data.url;
+}
+
+// ── Nueva NC en el mismo punto ──
+function nuevaNCEnPunto() {
+  document.getElementById('btn-guardar-nc').style.display = 'block';
+  document.getElementById('btn-guardar-nc').disabled = true;
+  document.getElementById('panel-post-nc').style.display = 'none';
+  // Reset formulario
+  state.foto1 = null; state.foto1DataUrl = null; state.foto1Marcada = null;
+  state.foto2 = null; state.foto2DataUrl = null; state.foto2Marcada = null;
+  state.planoMarcado = null; state.planoMarcadoOk = false;
+  document.getElementById('nc-obs').value = '';
+  document.getElementById('canvas-foto-section').style.display = 'none';
+  resetSlot(1); resetSlot(2);
+  cargarPlano();
+  if (state.modoManual) checkValidationManual();
+  else checkValidation();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ── Pasar al siguiente punto ──
+function siguientePuntoDesdeNC() {
+  document.getElementById('btn-guardar-nc').style.display = 'block';
+  document.getElementById('panel-post-nc').style.display = 'none';
+  const p = state.puntoActual;
+  const siguiente = getSiguientePendiente(p);
+  if (siguiente) {
+    openPunto(siguiente.Area, siguiente.Sector, siguiente.Subsector, siguiente.Punto, siguiente.Orden);
+  } else {
+    goPuntos();
+    renderPuntos();
+  }
 }
 
 // ── Siguiente punto pendiente ──
