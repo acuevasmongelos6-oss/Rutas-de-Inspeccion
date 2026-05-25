@@ -849,9 +849,13 @@ function renderPuntos() {
         : '';
 
       const estaConforme = p.estado === 'conforme';
+      const tieneNC = p.estado === 'nc' && p.cantNC > 0;
+
       const btnConformeStyle = estaConforme
         ? `background:rgba(0,212,170,.2);border:1.5px solid var(--accent);color:var(--accent);`
-        : `background:transparent;border:1.5px solid var(--border);color:var(--muted);`;
+        : tieneNC
+          ? `background:transparent;border:1.5px solid var(--border);color:var(--border);cursor:not-allowed;opacity:.3;`
+          : `background:transparent;border:1.5px solid var(--border);color:var(--muted);`;
 
       return `
         <div style="padding:12px 14px;border-bottom:1px solid var(--border);">
@@ -861,8 +865,9 @@ function renderPuntos() {
               ${ncsHtml}
             </div>
             <div style="display:flex;gap:6px;flex-shrink:0;">
-              <button onclick="marcarConformeDirecto('${p.Area}','${p.Sector}','${p.Subsector}','${p.Punto}','${p.Orden}')"
-                style="${btnConformeStyle}border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;font-family:'Syne',sans-serif;cursor:pointer;white-space:nowrap;">
+              <button onclick="${tieneNC ? '' : `marcarConformeDirecto('${p.Area}','${p.Sector}','${p.Subsector}','${p.Punto}','${p.Orden}')`}"
+                ${tieneNC ? 'disabled' : ''}
+                style="${btnConformeStyle}border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;font-family:'Syne',sans-serif;cursor:${tieneNC?'not-allowed':'pointer'};white-space:nowrap;">
                 ✓ Conforme
               </button>
               <button onclick="abrirNCDirecto('${p.Area}','${p.Sector}','${p.Subsector}','${p.Punto}','${p.Orden}')"
@@ -1528,10 +1533,8 @@ async function guardarNC() {
     actualizarAvanceLocal(p.Area, p.Sector, p.Subsector, p.Punto, 'nc', nuevaCantNC, extras);
     state.puntoActual = { ...state.puntoActual, estado: 'nc', cantNC: nuevaCantNC, ...extras };
 
-    // Mostrar panel de decisión
-    document.getElementById('btn-guardar-nc').style.display = 'none';
-    document.getElementById('panel-post-nc').style.display = 'block';
-    document.getElementById('panel-post-nc').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // Volver a la lista de puntos
+    setTimeout(() => { goPunto(); }, 800);
   } catch(e) {
     showToast('Error al guardar: ' + e.message, 'err');
     btn.disabled=false; btn.textContent='Guardar no conformidad';
