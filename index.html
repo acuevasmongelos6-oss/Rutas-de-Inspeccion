@@ -450,6 +450,40 @@
   </div>
 </div>
 
+<!-- Modal ver NC -->
+<div id="modal-ver-nc" style="display:none;">
+  <div class="modal-overlay" onclick="if(event.target===this)cerrarVerNC()">
+    <div class="modal-box" style="max-height:85vh;overflow-y:auto;border-radius:18px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+        <div class="modal-title" id="ver-nc-title">NC #1</div>
+        <button onclick="cerrarVerNC()" style="background:var(--surface2);border:1px solid var(--border);color:var(--muted);width:32px;height:32px;border-radius:8px;font-size:16px;cursor:pointer;">✕</button>
+      </div>
+
+      <!-- Fotos -->
+      <div id="ver-nc-fotos" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;"></div>
+
+      <!-- Observación -->
+      <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;margin-bottom:6px;letter-spacing:.5px;">OBSERVACIÓN</div>
+      <div id="ver-nc-obs-texto" style="font-size:14px;color:var(--text);line-height:1.6;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;"></div>
+
+      <!-- Editar observación -->
+      <div id="ver-nc-edit-section" style="display:none;">
+        <textarea class="obs-textarea" id="ver-nc-obs-input" style="min-height:80px;margin-bottom:10px;"></textarea>
+        <div style="display:flex;gap:8px;">
+          <button class="btn-cancel" onclick="cancelarEditVerNC()">Cancelar</button>
+          <button class="btn-save" onclick="guardarEditVerNC()">Guardar</button>
+        </div>
+      </div>
+      <button id="ver-nc-btn-editar" onclick="activarEditVerNC()"
+        style="width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);
+               padding:11px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;
+               font-family:'Syne',sans-serif;margin-bottom:4px;">
+        ✏️ Editar observación
+      </button>
+    </div>
+  </div>
+</div>
+
 <!-- Modal editar observación -->
 <div id="modal-edit-obs" style="display:none;">
   <div class="modal-overlay">
@@ -841,9 +875,12 @@ function renderPuntos() {
       const ncsHtml = p.estado === 'nc' && p.cantNC > 0
         ? Array.from({length: p.cantNC}, (_,i) => {
             const obs = p['NC'+(i+1)+'_Obs'] || '';
-            return `<div style="font-size:12px;color:var(--muted);padding:2px 0;display:flex;align-items:center;gap:6px;">
-              <span style="color:var(--danger);font-weight:700;font-size:11px;">NC</span>
-              <span style="color:var(--text);">→ ${obs || 'Sin descripción'}</span>
+            return `<div onclick="verNC('${p.Area}','${p.Sector}','${p.Subsector}','${p.Punto}',${i+1})"
+              style="font-size:12px;padding:4px 8px;margin-top:3px;display:flex;align-items:center;gap:6px;
+                     background:rgba(255,71,87,.06);border:1px solid rgba(255,71,87,.2);border-radius:6px;cursor:pointer;">
+              <span style="color:var(--danger);font-weight:700;font-size:11px;">NC ${i+1}</span>
+              <span style="color:var(--text);flex:1;">→ ${obs || 'Sin descripción'}</span>
+              <span style="color:var(--muted);font-size:11px;">✏️</span>
             </div>`;
           }).join('')
         : '';
@@ -1604,8 +1641,85 @@ function actualizarAvanceLocal(area, sector, subsector, punto, estado, cantNC, e
 }
 
 // ══════════════════════════════════════════════════════
-// EDITAR OBSERVACIÓN
+// VER NC DETALLE
 // ══════════════════════════════════════════════════════
+let verNCState = { punto: null, ncIdx: 0 };
+
+function verNC(area, sector, subsector, punto, ncIdx) {
+  const p = state.avance.find(x =>
+    x.Area === area && x.Sector === sector && x.Subsector === subsector && x.Punto === punto
+  );
+  if (!p) return;
+  verNCState = { punto: p, ncIdx };
+
+  document.getElementById('ver-nc-title').textContent = `NC #${ncIdx} — ${punto}`;
+
+  // Fotos
+  const foto1 = p['NC'+ncIdx+'_Foto1'] || '';
+  const foto2 = p['NC'+ncIdx+'_Foto2'] || '';
+  const plano = p['NC'+ncIdx+'_Plano'] || '';
+  const fotosDiv = document.getElementById('ver-nc-fotos');
+  fotosDiv.innerHTML = [
+    foto1 ? `<div style="flex:1;min-width:0;"><div style="font-size:10px;color:var(--muted);margin-bottom:4px;font-family:'DM Mono',monospace;">FOTO 1</div><img src="${foto1}" style="width:100%;border-radius:8px;border:1px solid var(--border);" onclick="window.open('${foto1}','_blank')"></div>` : '',
+    foto2 ? `<div style="flex:1;min-width:0;"><div style="font-size:10px;color:var(--muted);margin-bottom:4px;font-family:'DM Mono',monospace;">FOTO 2</div><img src="${foto2}" style="width:100%;border-radius:8px;border:1px solid var(--border);" onclick="window.open('${foto2}','_blank')"></div>` : '',
+    plano ? `<div style="width:100%;"><div style="font-size:10px;color:var(--accent2);margin-bottom:4px;font-family:'DM Mono',monospace;">PLANO</div><img src="${plano}" style="width:100%;border-radius:8px;border:1px solid var(--accent2);" onclick="window.open('${plano}','_blank')"></div>` : ''
+  ].join('');
+
+  // Observación
+  const obs = p['NC'+ncIdx+'_Obs'] || '';
+  document.getElementById('ver-nc-obs-texto').textContent = obs || 'Sin observación';
+  document.getElementById('ver-nc-edit-section').style.display = 'none';
+  document.getElementById('ver-nc-btn-editar').style.display = 'block';
+
+  document.getElementById('modal-ver-nc').style.display = 'flex';
+}
+
+function cerrarVerNC() {
+  document.getElementById('modal-ver-nc').style.display = 'none';
+}
+
+function activarEditVerNC() {
+  const p = verNCState.punto;
+  const obs = p['NC'+verNCState.ncIdx+'_Obs'] || '';
+  document.getElementById('ver-nc-obs-input').value = obs;
+  document.getElementById('ver-nc-edit-section').style.display = 'block';
+  document.getElementById('ver-nc-btn-editar').style.display = 'none';
+  document.getElementById('ver-nc-obs-input').focus();
+}
+
+function cancelarEditVerNC() {
+  document.getElementById('ver-nc-edit-section').style.display = 'none';
+  document.getElementById('ver-nc-btn-editar').style.display = 'block';
+}
+
+async function guardarEditVerNC() {
+  const p = verNCState.punto;
+  const ncIdx = verNCState.ncIdx;
+  const nuevaObs = document.getElementById('ver-nc-obs-input').value.trim();
+  showToast('Guardando...', 'load', 0);
+  try {
+    const r = await api('editarObservacion', {
+      idRuta:    state.rutaActiva.idRuta,
+      area:      p.Area,
+      sector:    p.Sector,
+      subsector: p.Subsector,
+      punto:     p.Punto,
+      nroNC:     ncIdx,
+      nuevaObs
+    });
+    if (!r.ok) { showToast(r.error || 'Error', 'err'); return; }
+    showToast('✓ Observación actualizada', 'ok');
+    // Actualizar estado local
+    p['NC'+ncIdx+'_Obs'] = nuevaObs;
+    actualizarAvanceLocal(p.Area, p.Sector, p.Subsector, p.Punto, p.estado, p.cantNC, { ['NC'+ncIdx+'_Obs']: nuevaObs });
+    document.getElementById('ver-nc-obs-texto').textContent = nuevaObs || 'Sin observación';
+    cancelarEditVerNC();
+    renderPuntos();
+  } catch(e) { showToast('Error de conexión', 'err'); }
+}
+
+// ══════════════════════════════════════════════════════
+// EDITAR OBSERVACIÓN (modal viejo — se mantiene por compatibilidad)
 function openEditObs(ncIdx) {
   const p = state.puntoActual;
   state.editingNCidx = ncIdx;
