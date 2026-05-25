@@ -938,15 +938,18 @@ function renderPuntos() {
   );
 
   const items = puntosSub.sort((a,b) => Number(a.Orden) - Number(b.Orden)).map(p => {
+    const pKey = JSON.stringify({area: p.Area, sector: p.Sector, subsector: p.Subsector, punto: p.Punto});
     const ncsHtml = p.estado === 'nc' && p.cantNC > 0
       ? Array.from({length: p.cantNC}, (_,i) => {
           const obs = p['NC'+(i+1)+'_Obs'] || '';
-          return `<div onclick="verNC('${p.Area}','${p.Sector}','${p.Subsector}','${p.Punto}',${i+1})"
+          return `<div class="nc-row-item" 
+            data-area="${p.Area}" data-sector="${p.Sector}" data-subsector="${p.Subsector}" 
+            data-punto="${p.Punto.replace(/"/g,'&quot;')}" data-ncidx="${i+1}"
             style="font-size:12px;padding:4px 8px;margin-top:3px;display:flex;align-items:center;gap:6px;
                    background:rgba(255,71,87,.06);border:1px solid rgba(255,71,87,.2);border-radius:6px;cursor:pointer;">
             <span style="color:var(--danger);font-weight:700;font-size:11px;">NC ${i+1}</span>
             <span style="color:var(--text);flex:1;">→ ${obs || 'Sin descripción'}</span>
-            <span style="color:var(--muted);font-size:11px;">✏️</span>
+            <span style="color:var(--muted);font-size:11px;">👁</span>
           </div>`;
         }).join('')
       : '';
@@ -1104,7 +1107,8 @@ async function cerrarSector(area, sector, subsector) {
     state.sectoresCerrados[area + '|' + sector + '|' + subsector] = ahora;
 
     showToast('✓ Sector cerrado', 'ok');
-    renderPuntos();
+    // Volver a la pantalla de subsectores
+    setTimeout(() => { goSubsectores(); }, 800);
   } catch(e) { showToast('Error de conexión', 'err'); }
 }
 
@@ -1295,8 +1299,8 @@ function abrirFormNC() {
   const p = state.puntoActual;
   state.modoManual = false;
   // Reset form
-  state.foto1 = null; state.foto1DataUrl = null; state.foto1Marcada = null;
-  state.foto2 = null; state.foto2DataUrl = null; state.foto2Marcada = null;
+  state.foto1 = null; state.foto1DataUrl = null; state.foto1Marcada = null; state.foto1Url = null;
+  state.foto2 = null; state.foto2DataUrl = null; state.foto2Marcada = null; state.foto2Url = null;
   state.planoMarcado = null; state.planoMarcadoOk = false;
 
   document.getElementById('nc-header-title').textContent = 'No Conformidad';
@@ -1336,11 +1340,45 @@ function onFotoSelected(n) {
   const file = document.getElementById('file-foto' + n).files[0];
   if (!file) return;
   comprimirImagen(file, 0.75, 1200, dataUrl => {
-    if (n === 1) { state.foto1 = dataUrl; state.foto1DataUrl = dataUrl; state.foto1Marcada = null; }
-    else         { state.foto2 = dataUrl; state.foto2DataUrl = dataUrl; state.foto2Marcada = null; }
+    if (n === 1) { state.foto1 = dataUrl; state.foto1DataUrl = dataUrl; state.foto1Marcada = null; state.foto1Url = null; }
+    else         { state.foto2 = dataUrl; state.foto2DataUrl = dataUrl; state.foto2Marcada = null; state.foto2Url = null; }
     mostrarFotoEnSlot(n, dataUrl);
     checkValidation();
+    // Subir a Drive en segundo plano
+    subirFotoEnBackground(n, dataUrl);
   });
+}
+
+async function subirFotoEnBackground(n, dataUrl) {
+  const slot = document.getElementById('slot-foto' + n);
+  // Indicador discreto de subida
+  const indicator = document.createElement('div');
+  indicator.id = 'upload-indicator-' + n;
+  indicator.style.cssText = 'position:absolute;bottom:4px;left:4px;background:rgba(0,153,255,.8);color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;font-family:DM Mono,monospace;';
+  indicator.textContent = '↑ subiendo...';
+  slot.style.position = 'relative';
+  slot.appendChild(indicator);
+  try {
+    const nombre = 'foto' + n + '_' + Date.now() + '.jpg';
+    const r = await api('subirFoto', {
+      base64: dataUrl.split(',')[1],
+      nombre,
+      mimeType: 'image/jpeg'
+    });
+    if (r.ok) {
+      if (n === 1) state.foto1Url = r.data.url;
+      else         state.foto2Url = r.data.url;
+      indicator.style.background = 'rgba(0,212,170,.8)';
+      indicator.textContent = '✓ listo';
+      setTimeout(() => indicator.remove(), 2000);
+    } else {
+      indicator.style.background = 'rgba(255,71,87,.8)';
+      indicator.textContent = '✗ error';
+    }
+  } catch(e) {
+    const ind = document.getElementById('upload-indicator-' + n);
+    if (ind) { ind.style.background = 'rgba(255,71,87,.8)'; ind.textContent = '✗ error'; }
+  }
 }
 
 function mostrarFotoEnSlot(n, dataUrl) {
@@ -1571,16 +1609,24 @@ async function guardarNC() {
   const obs = document.getElementById('nc-obs').value.trim();
   const btn = document.getElementById('btn-guardar-nc');
   btn.disabled = true;
-  btn.textContent = 'Subiendo fotos...';
-  showToast('Subiendo fotos...', 'load', 0);
 
   try {
-    // Subir foto 1
-    const foto1Url = await subirFotoAPI(state.foto1, 'foto1_' + Date.now() + '.jpg');
-    // Subir foto 2 (opcional)
-    let foto2Url = '';
-    if (state.foto2) foto2Url = await subirFotoAPI(state.foto2, 'foto2_' + Date.now() + '.jpg');
-    // Subir plano
+    // Usar URLs ya subidas en background, o subir ahora si no están listas
+    let foto1Url = state.foto1Url || '';
+    let foto2Url = state.foto2Url || '';
+
+    if (state.foto1 && !foto1Url) {
+      btn.textContent = 'Subiendo foto 1...';
+      showToast('Subiendo foto 1...', 'load', 0);
+      foto1Url = await subirFotoAPI(state.foto1, 'foto1_' + Date.now() + '.jpg');
+    }
+    if (state.foto2 && !foto2Url) {
+      btn.textContent = 'Subiendo foto 2...';
+      showToast('Subiendo foto 2...', 'load', 0);
+      foto2Url = await subirFotoAPI(state.foto2, 'foto2_' + Date.now() + '.jpg');
+    }
+
+    btn.textContent = 'Subiendo plano...';
     showToast('Subiendo plano...', 'load', 0);
     const planoUrl = await subirFotoAPI(state.planoMarcado, 'plano_' + Date.now() + '.jpg');
 
@@ -1598,6 +1644,7 @@ async function guardarNC() {
     }
     ncsPrevias.push({ obs, foto1: foto1Url, foto2: foto2Url, plano: planoUrl });
 
+    btn.textContent = 'Guardando...';
     showToast('Guardando...', 'load', 0);
     const r = await api('guardarNC', {
       idRuta:    state.rutaActiva.idRuta,
@@ -1695,6 +1742,18 @@ function actualizarAvanceLocal(area, sector, subsector, punto, estado, cantNC, e
     state.avance.push({ Area: area, Sector: sector, Subsector: subsector, Punto: punto, estado, cantNC, ...extras });
   }
 }
+
+// ── Event listener delegado para NC rows ──
+document.addEventListener('click', function(e) {
+  const row = e.target.closest('.nc-row-item');
+  if (!row) return;
+  const area      = row.dataset.area;
+  const sector    = row.dataset.sector;
+  const subsector = row.dataset.subsector;
+  const punto     = row.dataset.punto;
+  const ncIdx     = parseInt(row.dataset.ncidx);
+  verNC(area, sector, subsector, punto, ncIdx);
+});
 
 // ══════════════════════════════════════════════════════
 // VER NC DETALLE
