@@ -297,12 +297,24 @@
   </div>
 </div>
 
-<!-- ══════════════════ PUNTOS (lista de puntos del sector) ══════════════════ -->
-<div id="screen-puntos" class="screen">
+<!-- ══════════════════ SUBSECTORES ══════════════════ -->
+<div id="screen-subsectores" class="screen">
   <div class="header">
     <button class="back-btn" onclick="goRuta()">←</button>
     <div>
-      <div class="header h1" id="puntos-title">Sector</div>
+      <div class="header h1" id="subsectores-title">Sector</div>
+      <div class="sub" id="subsectores-sub"></div>
+    </div>
+  </div>
+  <div class="puntos-content" id="subsectores-content"></div>
+</div>
+
+<!-- ══════════════════ PUNTOS (lista de puntos del subsector) ══════════════════ -->
+<div id="screen-puntos" class="screen">
+  <div class="header">
+    <button class="back-btn" onclick="goSubsectores()">←</button>
+    <div>
+      <div class="header h1" id="puntos-title">Subsector</div>
       <div class="sub" id="puntos-sub"></div>
     </div>
   </div>
@@ -570,10 +582,11 @@ function showScreen(id) {
   document.getElementById(id).classList.add('active');
   window.scrollTo(0,0);
 }
-function goHome()   { showScreen('screen-home'); }
-function goRuta()   { showScreen('screen-ruta'); }
-function goPuntos() { showScreen('screen-puntos'); }
-function goPunto()  { showScreen('screen-puntos'); renderPuntos(); }
+function goHome()        { showScreen('screen-home'); }
+function goRuta()        { showScreen('screen-ruta'); }
+function goSubsectores() { showScreen('screen-subsectores'); renderSubsectores(); }
+function goPuntos()      { showScreen('screen-puntos'); renderPuntos(); }
+function goPunto()       { showScreen('screen-puntos'); renderPuntos(); }
 
 // ══════════════════════════════════════════════════════
 // LOGIN
@@ -840,155 +853,198 @@ async function iniciarRuta() {
 // ══════════════════════════════════════════════════════
 async function openSector(area, sector) {
   state.sectorActual = { area, sector };
-  document.getElementById('puntos-title').textContent = sector;
-  document.getElementById('puntos-sub').textContent = area;
+  document.getElementById('subsectores-title').textContent = sector;
+  document.getElementById('subsectores-sub').textContent = area;
+  showScreen('screen-subsectores');
+  renderSubsectores();
+}
+
+function renderSubsectores() {
+  const { area, sector } = state.sectorActual;
+  const content = document.getElementById('subsectores-content');
+
+  // Obtener subsectores únicos del sector
+  const puntosSector = state.plantilla.filter(p => p.Area === area && p.Sector === sector);
+  const subsectores = [...new Set(puntosSector.map(p => p.Subsector))];
+
+  if (!subsectores.length) {
+    content.innerHTML = `<div class="empty-state"><div class="empty-icon">📋</div><p>No hay subsectores cargados.</p></div>`;
+    return;
+  }
+
+  const html = subsectores.map(sub => {
+    // Avance del subsector
+    const puntosSub = state.avance.filter(p =>
+      p.Area === area && p.Sector === sector && p.Subsector === sub &&
+      p.Punto !== '✓ SECTOR CERRADO'
+    );
+    const plantSub = puntosSector.filter(p => p.Subsector === sub);
+    const total    = plantSub.length;
+    const marcados = puntosSub.filter(p => p.estado !== 'pendiente').length;
+    const conNC    = puntosSub.filter(p => p.estado === 'nc').length;
+    const cerrado  = state.sectoresCerrados?.[area+'|'+sector+'|'+sub];
+
+    // Última inspección
+    const ultima = state.ultimaPorSubsector?.[area+'|'+sector+'|'+sub];
+
+    const pct = total > 0 ? Math.round(marcados / total * 100) : 0;
+    const chipCls = cerrado ? 'done' : pct === 100 ? 'done' : pct > 0 ? 'partial' : '';
+    const chipLabel = cerrado ? '✓ Cerrado' : pct + '%';
+
+    return `
+      <div class="sector-item" onclick="openSubsector('${area}','${sector}','${sub}')">
+        <div style="flex:1;">
+          <div class="sector-name">${sub}</div>
+          <div class="sector-sub">
+            ${cerrado ? `Cerrado — ${cerrado}` : `${marcados}/${total} puntos${conNC > 0 ? ` · ${conNC} NC` : ''}`}
+          </div>
+          ${ultima ? `<div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">Última: ${ultima.fecha} — ${ultima.inspector}</div>` : ''}
+        </div>
+        <div class="sector-right">
+          <span class="pct-chip ${chipCls}">${chipLabel}</span>
+          <span style="color:var(--muted)">›</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  content.innerHTML = `<div class="area-group" style="margin:16px;">${html}</div>`;
+}
+
+function openSubsector(area, sector, subsector) {
+  state.sectorActual = { area, sector, subsector };
+  document.getElementById('puntos-title').textContent = subsector;
+  document.getElementById('puntos-sub').textContent = sector + ' · ' + area;
   showScreen('screen-puntos');
   renderPuntos();
 }
 
 function renderPuntos() {
-  const { area, sector } = state.sectorActual;
+  const { area, sector, subsector } = state.sectorActual;
   const content = document.getElementById('puntos-content');
 
-  // Filtrar puntos de este sector
-  const puntosSector = state.avance.filter(p => p.Area === area && p.Sector === sector);
-  if (!puntosSector.length) {
-    content.innerHTML = `<div class="empty-state"><div class="empty-icon">📋</div><p>No hay puntos en este sector.</p></div>`;
+  const puntosSub = state.avance.filter(p =>
+    p.Area === area && p.Sector === sector && p.Subsector === subsector &&
+    p.Punto !== '✓ SECTOR CERRADO'
+  );
+
+  if (!puntosSub.length) {
+    content.innerHTML = `<div class="empty-state"><div class="empty-icon">📋</div><p>No hay puntos en este subsector.</p></div>`;
     return;
   }
 
-  // Agrupar por subsector
-  const grupos = {};
-  puntosSector.forEach(p => {
-    if (!grupos[p.Subsector]) grupos[p.Subsector] = [];
-    grupos[p.Subsector].push(p);
-  });
+  const noListados = state.avance.filter(p =>
+    p.Area === area && p.Sector === sector && p.Subsector === subsector && p.Punto === '⚑ Hallazgo no listado'
+  );
 
-  let html = '';
-  Object.entries(grupos).forEach(([subsector, puntos]) => {
-    const noListados = state.avance.filter(p =>
-      p.Area === area && p.Sector === sector && p.Subsector === subsector && p.Punto === '⚑ Hallazgo no listado'
-    );
+  const items = puntosSub.sort((a,b) => Number(a.Orden) - Number(b.Orden)).map(p => {
+    const ncsHtml = p.estado === 'nc' && p.cantNC > 0
+      ? Array.from({length: p.cantNC}, (_,i) => {
+          const obs = p['NC'+(i+1)+'_Obs'] || '';
+          return `<div onclick="verNC('${p.Area}','${p.Sector}','${p.Subsector}','${p.Punto}',${i+1})"
+            style="font-size:12px;padding:4px 8px;margin-top:3px;display:flex;align-items:center;gap:6px;
+                   background:rgba(255,71,87,.06);border:1px solid rgba(255,71,87,.2);border-radius:6px;cursor:pointer;">
+            <span style="color:var(--danger);font-weight:700;font-size:11px;">NC ${i+1}</span>
+            <span style="color:var(--text);flex:1;">→ ${obs || 'Sin descripción'}</span>
+            <span style="color:var(--muted);font-size:11px;">✏️</span>
+          </div>`;
+        }).join('')
+      : '';
 
-    const items = puntos.sort((a,b) => Number(a.Orden) - Number(b.Orden)).map(p => {
-      // NCs ya registradas
-      const ncsHtml = p.estado === 'nc' && p.cantNC > 0
-        ? Array.from({length: p.cantNC}, (_,i) => {
-            const obs = p['NC'+(i+1)+'_Obs'] || '';
-            return `<div onclick="verNC('${p.Area}','${p.Sector}','${p.Subsector}','${p.Punto}',${i+1})"
-              style="font-size:12px;padding:4px 8px;margin-top:3px;display:flex;align-items:center;gap:6px;
-                     background:rgba(255,71,87,.06);border:1px solid rgba(255,71,87,.2);border-radius:6px;cursor:pointer;">
-              <span style="color:var(--danger);font-weight:700;font-size:11px;">NC ${i+1}</span>
-              <span style="color:var(--text);flex:1;">→ ${obs || 'Sin descripción'}</span>
-              <span style="color:var(--muted);font-size:11px;">✏️</span>
-            </div>`;
-          }).join('')
-        : '';
+    const estaConforme = p.estado === 'conforme';
+    const tieneNC = p.estado === 'nc' && p.cantNC > 0;
+    const btnConformeStyle = estaConforme
+      ? `background:rgba(0,212,170,.2);border:1.5px solid var(--accent);color:var(--accent);`
+      : tieneNC
+        ? `background:transparent;border:1.5px solid var(--border);color:var(--border);cursor:not-allowed;opacity:.3;`
+        : `background:transparent;border:1.5px solid var(--border);color:var(--muted);`;
 
-      const estaConforme = p.estado === 'conforme';
-      const tieneNC = p.estado === 'nc' && p.cantNC > 0;
-
-      const btnConformeStyle = estaConforme
-        ? `background:rgba(0,212,170,.2);border:1.5px solid var(--accent);color:var(--accent);`
-        : tieneNC
-          ? `background:transparent;border:1.5px solid var(--border);color:var(--border);cursor:not-allowed;opacity:.3;`
-          : `background:transparent;border:1.5px solid var(--border);color:var(--muted);`;
-
-      return `
-        <div style="padding:12px 14px;border-bottom:1px solid var(--border);">
-          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;">
-            <div style="flex:1;min-width:0;">
-              <div style="font-size:14px;font-weight:700;margin-bottom:${ncsHtml ? '6px' : '0'};">${p.Punto}</div>
-              ${ncsHtml}
-            </div>
-            <div style="display:flex;gap:6px;flex-shrink:0;">
-              <button onclick="${tieneNC ? '' : `marcarConformeDirecto('${p.Area}','${p.Sector}','${p.Subsector}','${p.Punto}','${p.Orden}')`}"
-                ${tieneNC ? 'disabled' : ''}
-                style="${btnConformeStyle}border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;font-family:'Syne',sans-serif;cursor:${tieneNC?'not-allowed':'pointer'};white-space:nowrap;">
-                ✓ Conforme
-              </button>
-              <button onclick="abrirNCDirecto('${p.Area}','${p.Sector}','${p.Subsector}','${p.Punto}','${p.Orden}')"
-                style="background:${p.estado==='nc'?'rgba(255,71,87,.15)':'transparent'};border:1.5px solid ${p.estado==='nc'?'var(--danger)':'var(--border)'};color:${p.estado==='nc'?'var(--danger)':'var(--muted)'};border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;font-family:'Syne',sans-serif;cursor:pointer;white-space:nowrap;">
-                ⚠ NC${p.cantNC > 0 ? ' ('+p.cantNC+')' : ''}
-              </button>
-            </div>
+    return `
+      <div style="padding:12px 14px;border-bottom:1px solid var(--border);">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;">
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:14px;font-weight:700;margin-bottom:${ncsHtml ? '6px' : '0'};">${p.Punto}</div>
+            ${ncsHtml}
           </div>
-        </div>
-      `;
-    }).join('');
-
-    // Hallazgos no listados
-    const noListadosHtml = noListados.map(p => `
-      <div style="padding:10px 14px;border-bottom:1px solid var(--border);background:rgba(255,165,2,.04);">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
-          <div>
-            <div style="font-size:13px;font-weight:700;color:var(--warn);">⚑ Hallazgo no listado</div>
-            <div style="font-size:11px;color:var(--muted);">${p.cantNC} registro(s)</div>
+          <div style="display:flex;gap:6px;flex-shrink:0;">
+            <button onclick="${tieneNC ? '' : `marcarConformeDirecto('${p.Area}','${p.Sector}','${p.Subsector}','${p.Punto}','${p.Orden}')`}"
+              ${tieneNC ? 'disabled' : ''}
+              style="${btnConformeStyle}border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;font-family:'Syne',sans-serif;cursor:${tieneNC?'not-allowed':'pointer'};white-space:nowrap;">
+              ✓ Conforme
+            </button>
+            <button onclick="abrirNCDirecto('${p.Area}','${p.Sector}','${p.Subsector}','${p.Punto}','${p.Orden}')"
+              style="background:${p.estado==='nc'?'rgba(255,71,87,.15)':'transparent'};border:1.5px solid ${p.estado==='nc'?'var(--danger)':'var(--border)'};color:${p.estado==='nc'?'var(--danger)':'var(--muted)'};border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;font-family:'Syne',sans-serif;cursor:pointer;white-space:nowrap;">
+              ⚠ NC${p.cantNC > 0 ? ' ('+p.cantNC+')' : ''}
+            </button>
           </div>
-          <button onclick="abrirNCManual('${area}','${sector}','${subsector}')"
-            style="background:rgba(255,165,2,.1);border:1px solid var(--warn);color:var(--warn);
-                   border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;
-                   font-family:'Syne',sans-serif;cursor:pointer;">
-            + Agregar
-          </button>
         </div>
       </div>
-    `).join('');
+    `;
+  }).join('');
 
-    // Botón hallazgo no listado
-    const btnNoListado = `
-      <div style="padding:10px 12px;border-top:1px dashed var(--border);">
+  const noListadosHtml = noListados.map(p => `
+    <div style="padding:10px 14px;border-bottom:1px solid var(--border);background:rgba(255,165,2,.04);">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--warn);">⚑ Hallazgo no listado</div>
+          <div style="font-size:11px;color:var(--muted);">${p.cantNC} registro(s)</div>
+        </div>
         <button onclick="abrirNCManual('${area}','${sector}','${subsector}')"
-          style="width:100%;background:transparent;border:1px dashed var(--warn);color:var(--warn);
-                 border-radius:10px;padding:10px 14px;font-size:12px;font-weight:600;
-                 font-family:'Syne',sans-serif;cursor:pointer;display:flex;align-items:center;
-                 justify-content:center;gap:8px;">
-          ＋ Registrar hallazgo no listado
-          <span style="font-size:10px;font-weight:400;color:var(--muted);">para algo fuera de la lista</span>
+          style="background:rgba(255,165,2,.1);border:1px solid var(--warn);color:var(--warn);
+                 border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;
+                 font-family:'Syne',sans-serif;cursor:pointer;">
+          + Agregar
         </button>
       </div>
-    `;
+    </div>
+  `).join('');
 
-    // Cerrar sector
-    const sectorCerrado = state.sectoresCerrados &&
-      state.sectoresCerrados[area + '|' + sector + '|' + subsector];
-    const keySubsector = area + '|' + sector + '|' + subsector;
-    const ultimaInsp = state.ultimaPorSubsector && state.ultimaPorSubsector[keySubsector];
-    const totalPuntos = puntos.length;
-    const marcados = puntos.filter(p => p.estado !== 'pendiente').length;
-    const todosCompletos = marcados === totalPuntos;
+  const btnNoListado = `
+    <div style="padding:10px 12px;border-top:1px dashed var(--border);">
+      <button onclick="abrirNCManual('${area}','${sector}','${subsector}')"
+        style="width:100%;background:transparent;border:1px dashed var(--warn);color:var(--warn);
+               border-radius:10px;padding:10px 14px;font-size:12px;font-weight:600;
+               font-family:'Syne',sans-serif;cursor:pointer;display:flex;align-items:center;
+               justify-content:center;gap:8px;">
+        ＋ Registrar hallazgo no listado
+        <span style="font-size:10px;font-weight:400;color:var(--muted);">para algo fuera de la lista</span>
+      </button>
+    </div>
+  `;
 
-    const cierreHtml = sectorCerrado
-      ? `<div class="sector-cerrado-badge">
-           <span style="flex:1;">✓ Sector cerrado — ${sectorCerrado}</span>
-           <button onclick="nuevaInspeccionSubsector('${area}','${sector}','${subsector}')"
-             style="background:rgba(0,153,255,.15);border:1px solid var(--accent2);color:var(--accent2);
-                    border-radius:8px;padding:6px 12px;font-size:11px;font-weight:700;
-                    font-family:'Syne',sans-serif;cursor:pointer;">
-             + Nueva inspección
-           </button>
-         </div>`
-      : `<div style="padding:10px 12px;border-top:1px solid var(--border);">
-           ${ultimaInsp ? `<div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;margin-bottom:8px;">Última: ${ultimaInsp.fecha} — ${ultimaInsp.inspector}</div>` : ''}
-           <button class="btn-cerrar-sector" ${!todosCompletos ? 'disabled' : ''}
-             onclick="cerrarSector('${area}','${sector}','${subsector}')">
-             ${todosCompletos ? '✓ Cerrar sector' : `✓ Cerrar sector (${marcados}/${totalPuntos} completados)`}
-           </button>
-           ${!todosCompletos ? `<div style="font-size:11px;color:var(--muted);text-align:center;margin-top:6px;font-family:'DM Mono',monospace;">Completá todos los puntos para cerrar el sector</div>` : ''}
-         </div>`;
+  const sectorCerrado = state.sectoresCerrados?.[area+'|'+sector+'|'+subsector];
+  const ultimaInsp = state.ultimaPorSubsector?.[area+'|'+sector+'|'+subsector];
+  const totalPuntos = puntosSub.length;
+  const marcados = puntosSub.filter(p => p.estado !== 'pendiente').length;
+  const todosCompletos = marcados === totalPuntos;
 
-    html += `
-      <div class="subsector-group">
-        <div class="subsector-header">${subsector}</div>
-        ${items}
-        ${noListadosHtml}
-        ${btnNoListado}
-        ${cierreHtml}
-      </div>
-    `;
-  });
+  const cierreHtml = sectorCerrado
+    ? `<div class="sector-cerrado-badge">
+         <span style="flex:1;">✓ Sector cerrado — ${sectorCerrado}</span>
+         <button onclick="nuevaInspeccionSubsector('${area}','${sector}','${subsector}')"
+           style="background:rgba(0,153,255,.15);border:1px solid var(--accent2);color:var(--accent2);
+                  border-radius:8px;padding:6px 12px;font-size:11px;font-weight:700;
+                  font-family:'Syne',sans-serif;cursor:pointer;">
+           + Nueva inspección
+         </button>
+       </div>`
+    : `<div style="padding:10px 12px;border-top:1px solid var(--border);">
+         ${ultimaInsp ? `<div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;margin-bottom:8px;">Última: ${ultimaInsp.fecha} — ${ultimaInsp.inspector}</div>` : ''}
+         <button class="btn-cerrar-sector" ${!todosCompletos ? 'disabled' : ''}
+           onclick="cerrarSector('${area}','${sector}','${subsector}')">
+           ${todosCompletos ? '✓ Cerrar sector' : `✓ Cerrar sector (${marcados}/${totalPuntos} completados)`}
+         </button>
+         ${!todosCompletos ? `<div style="font-size:11px;color:var(--muted);text-align:center;margin-top:6px;font-family:'DM Mono',monospace;">Completá todos los puntos para cerrar el sector</div>` : ''}
+       </div>`;
 
-  content.innerHTML = html;
+  content.innerHTML = `
+    <div class="subsector-group" style="margin:16px;">
+      ${items}
+      ${noListadosHtml}
+      ${btnNoListado}
+      ${cierreHtml}
+    </div>
+  `;
 }
 
 // ── Nueva inspección en subsector cerrado ──
