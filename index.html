@@ -276,10 +276,11 @@
 <div id="screen-ruta" class="screen">
   <div class="header">
     <button class="back-btn" onclick="goHome()">←</button>
-    <div>
+    <div style="flex:1;">
       <div class="header h1" id="ruta-title">Ruta</div>
       <div class="sub" id="ruta-sub"></div>
     </div>
+    <button class="back-btn" onclick="refrescarRuta()" title="Actualizar" style="font-size:16px;">↻</button>
   </div>
   <div id="ruta-no-activa" style="display:none; padding:16px;">
     <button class="btn-iniciar" id="btn-iniciar-ruta" onclick="iniciarRuta()">▶ Iniciar nueva inspección</button>
@@ -387,6 +388,7 @@
       </div>
       <div class="form-section-body">
         <div id="plano-wrapper">
+          <div id="plano-sector-label" style="font-size:12px;font-family:'DM Mono',monospace;color:var(--accent2);margin-bottom:8px;"></div>
           <div class="plano-placeholder" id="plano-placeholder">
             <div class="plano-icon">🗺️</div>
             <p>Cargando plano del sector...</p>
@@ -881,11 +883,17 @@ async function marcarConforme() {
       legajo:    state.inspector.Legajo
     });
     if (!r.ok) { showToast(r.error || 'Error al guardar', 'err'); return; }
-    showToast('✓ Punto marcado como conforme', 'ok');
+    showToast('✓ Conforme — avanzando al siguiente punto', 'ok');
     // Actualizar estado local
     state.puntoActual.estado = 'conforme';
     actualizarAvanceLocal(p.Area, p.Sector, p.Subsector, p.Punto, 'conforme', 0, {});
-    renderPuntoDetalle();
+    // Avanzar automáticamente al siguiente punto pendiente
+    const siguientePunto = getSiguientePendiente(p);
+    if (siguientePunto) {
+      setTimeout(() => openPunto(siguientePunto.Area, siguientePunto.Sector, siguientePunto.Subsector, siguientePunto.Punto, siguientePunto.Orden), 1200);
+    } else {
+      setTimeout(() => { goPuntos(); renderPuntos(); }, 1200);
+    }
   } catch(e) { showToast('Error de conexión', 'err'); }
 }
 
@@ -1060,6 +1068,8 @@ function confirmCanvas() {
   if (n === 1) { state.foto1Marcada = dataUrl; state.foto1 = dataUrl; mostrarFotoEnSlot(1, dataUrl); }
   else         { state.foto2Marcada = dataUrl; state.foto2 = dataUrl; mostrarFotoEnSlot(2, dataUrl); }
   document.getElementById('canvas-foto-section').style.display = 'none';
+  // Scroll de vuelta al formulario
+  document.getElementById('slot-foto1').scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
 // ── Plano ──
@@ -1077,8 +1087,12 @@ function cargarPlano() {
   const planoUrl = PLANOS_BASE + (codPlano || 'default') + '.jpg';
 
   document.getElementById('plano-placeholder').style.display = 'block';
+  document.getElementById('plano-placeholder').innerHTML = `<div class="plano-icon">🗺️</div><p>Cargando plano...</p>`;
   document.getElementById('plano-container').style.display  = 'none';
   document.getElementById('plano-hint').style.display       = 'none';
+  // Mostrar nombre del sector encima del plano
+  const planoLabel = document.getElementById('plano-sector-label');
+  if (planoLabel) planoLabel.textContent = p.Subsector + ' — ' + p.Sector;
   state.planoMarcadoOk = false;
   planoPunto = null;
 
@@ -1198,7 +1212,7 @@ async function guardarNC() {
 
     if (!r.ok) { showToast(r.error || 'Error al guardar', 'err'); btn.disabled=false; btn.textContent='Guardar no conformidad'; return; }
 
-    showToast('✓ No conformidad guardada correctamente', 'ok');
+    showToast('✓ NC guardada — avanzando al siguiente punto', 'ok');
 
     // Actualizar estado local
     const nuevaCantNC = ncsPrevias.length;
@@ -1211,8 +1225,13 @@ async function guardarNC() {
     });
     actualizarAvanceLocal(p.Area, p.Sector, p.Subsector, p.Punto, 'nc', nuevaCantNC, extras);
     state.puntoActual = { ...state.puntoActual, estado: 'nc', cantNC: nuevaCantNC, ...extras };
-    goPunto();
-    renderPuntoDetalle();
+    // Avanzar al siguiente punto pendiente
+    const siguiente = getSiguientePendiente(p);
+    if (siguiente) {
+      setTimeout(() => openPunto(siguiente.Area, siguiente.Sector, siguiente.Subsector, siguiente.Punto, siguiente.Orden), 1200);
+    } else {
+      setTimeout(() => { goPuntos(); renderPuntos(); }, 1200);
+    }
   } catch(e) {
     showToast('Error al guardar: ' + e.message, 'err');
     btn.disabled=false; btn.textContent='Guardar no conformidad';
@@ -1225,6 +1244,16 @@ async function subirFotoAPI(dataUrl, nombre) {
   const r = await api('subirFoto', { base64, nombre, mimeType });
   if (!r.ok) throw new Error('Error al subir foto: ' + (r.error || ''));
   return r.data.url;
+}
+
+// ── Siguiente punto pendiente ──
+function getSiguientePendiente(puntoActual) {
+  // Buscar en el mismo subsector primero, luego en el mismo sector
+  const enSector = state.avance.filter(p =>
+    p.Area === puntoActual.Area && p.Sector === puntoActual.Sector && p.estado === 'pendiente'
+  ).sort((a,b) => Number(a.Orden) - Number(b.Orden));
+  if (enSector.length > 0) return enSector[0];
+  return null;
 }
 
 // ── Actualizar avance local sin recargar ──
@@ -1280,7 +1309,13 @@ async function saveEditObs() {
 // CERRAR RUTA
 // ══════════════════════════════════════════════════════
 async function cerrarRuta() {
-  if (!confirm('¿Cerrar y finalizar la ruta? Esta acción no se puede deshacer.')) return;
+  // Resumen antes de cerrar
+  const total      = state.avance.length;
+  const conformes  = state.avance.filter(p => p.estado === 'conforme').length;
+  const conNC      = state.avance.filter(p => p.estado === 'nc').length;
+  const pendientes = state.avance.filter(p => p.estado === 'pendiente').length;
+  const msg = `Resumen de la ruta:\n\n✓ Conformes: ${conformes}\n⚠ Con no conformidades: ${conNC}\n○ Pendientes: ${pendientes}\n\n¿Cerrar y finalizar la ruta?`;
+  if (!confirm(msg)) return;
   showToast('Cerrando ruta...', 'load', 0);
   try {
     const r = await api('cerrarRuta', { idRuta: state.rutaActiva.idRuta });
@@ -1289,6 +1324,18 @@ async function cerrarRuta() {
     state.rutaActiva = null;
     await loadHome();
   } catch(e) { showToast('Error de conexión', 'err'); }
+}
+
+async function refrescarRuta() {
+  if (!state.rutaActiva) return;
+  showToast('Actualizando...', 'load', 0);
+  try {
+    const avR = await api('getAvance', { idRuta: state.rutaActiva.idRuta });
+    hideToast();
+    state.avance = avR.data?.puntos || [];
+    renderRutaContent();
+    showToast('✓ Actualizado', 'ok');
+  } catch(e) { showToast('Error al actualizar', 'err'); }
 }
 
 // ══════════════════════════════════════════════════════
