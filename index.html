@@ -539,7 +539,7 @@ function showScreen(id) {
 function goHome()   { showScreen('screen-home'); }
 function goRuta()   { showScreen('screen-ruta'); }
 function goPuntos() { showScreen('screen-puntos'); }
-function goPunto()  { showScreen('screen-punto'); }
+function goPunto()  { showScreen('screen-puntos'); renderPuntos(); }
 
 // ══════════════════════════════════════════════════════
 // LOGIN
@@ -708,15 +708,26 @@ function renderRutaContent() {
     const pct = av.total > 0 ? Math.round((av.tocados / av.total) * 100) : 0;
 
     const sectoresHtml = Object.entries(sectores).map(([sector, puntos]) => {
-      const sk = area + '|' + sector;
-      const sav = avanceMap[sk] || { total: puntos.length, tocados: 0 };
-      const spct = sav.total > 0 ? Math.round((sav.tocados / sav.total) * 100) : 0;
-      const chipCls = spct === 100 ? 'done' : spct > 0 ? 'partial' : '';
+      // Agrupar por subsector
+      const subsectoresUnicos = [...new Set(puntos.map(p => p.Subsector))];
+      const totalSubs = subsectoresUnicos.length;
+      const subsCerrados = subsectoresUnicos.filter(sub => {
+        const key = area + '|' + sector + '|' + sub;
+        if (state.sectoresCerrados && state.sectoresCerrados[key]) return true;
+        // También contar si todos los puntos del subsector están marcados
+        const puntosSub = state.avance.filter(p =>
+          p.Area === area && p.Sector === sector && p.Subsector === sub &&
+          p.Punto !== '✓ SECTOR CERRADO'
+        );
+        const plantSub = puntos.filter(p => p.Subsector === sub);
+        return plantSub.length > 0 && puntosSub.length >= plantSub.length &&
+          puntosSub.every(p => p.estado !== 'pendiente');
+      }).length;
+
+      const chipCls = subsCerrados === totalSubs && totalSubs > 0 ? 'done' : subsCerrados > 0 ? 'partial' : '';
 
       // Última inspección del subsector (de rutas anteriores)
-      // Agrupar subsectores únicos dentro del sector
-      const subsectores = [...new Set(puntos.map(p => p.Subsector))];
-      const subsectorInfo = subsectores.map(sub => {
+      const subsectorInfo = subsectoresUnicos.map(sub => {
         const key = area + '|' + sector + '|' + sub;
         const ultima = state.ultimaPorSubsector && state.ultimaPorSubsector[key];
         return ultima
@@ -728,11 +739,11 @@ function renderRutaContent() {
         <div class="sector-item" onclick="openSector('${area}', '${sector}')">
           <div style="flex:1;">
             <div class="sector-name">${sector}</div>
-            <div class="sector-sub">${sav.tocados}/${sav.total} puntos</div>
+            <div class="sector-sub">${subsCerrados}/${totalSubs} subsectores</div>
             ${subsectorInfo}
           </div>
           <div class="sector-right">
-            <span class="pct-chip ${chipCls}">${spct}%</span>
+            <span class="pct-chip ${chipCls}">${totalSubs > 0 ? Math.round(subsCerrados/totalSubs*100) : 0}%</span>
             <span style="color:var(--muted)">›</span>
           </div>
         </div>
@@ -821,39 +832,68 @@ function renderPuntos() {
 
   let html = '';
   Object.entries(grupos).forEach(([subsector, puntos]) => {
-    // Buscar si hay hallazgos no listados ya registrados para este subsector
     const noListados = state.avance.filter(p =>
       p.Area === area && p.Sector === sector && p.Subsector === subsector && p.Punto === '⚑ Hallazgo no listado'
     );
 
     const items = puntos.sort((a,b) => Number(a.Orden) - Number(b.Orden)).map(p => {
-      const dotCls = p.estado === 'conforme' ? 'conforme' : p.estado === 'nc' ? 'nc' : 'pendiente';
-      const dotIcon = p.estado === 'conforme' ? '✓' : p.estado === 'nc' ? p.cantNC : '○';
+      // NCs ya registradas
+      const ncsHtml = p.estado === 'nc' && p.cantNC > 0
+        ? Array.from({length: p.cantNC}, (_,i) => {
+            const obs = p['NC'+(i+1)+'_Obs'] || '';
+            return `<div style="font-size:12px;color:var(--muted);padding:2px 0;display:flex;align-items:center;gap:6px;">
+              <span style="color:var(--danger);font-weight:700;font-size:11px;">NC</span>
+              <span style="color:var(--text);">→ ${obs || 'Sin descripción'}</span>
+            </div>`;
+          }).join('')
+        : '';
+
+      const estaConforme = p.estado === 'conforme';
+      const btnConformeStyle = estaConforme
+        ? `background:rgba(0,212,170,.2);border:1.5px solid var(--accent);color:var(--accent);`
+        : `background:transparent;border:1.5px solid var(--border);color:var(--muted);`;
+
       return `
-        <div class="punto-item ${p.estado}" onclick="openPunto('${p.Area}','${p.Sector}','${p.Subsector}','${p.Punto}','${p.Orden}')">
-          <div>
-            <div class="punto-nombre">${p.Punto}</div>
-            <div class="punto-info">${p.estado === 'pendiente' ? 'Pendiente' : p.estado === 'conforme' ? 'Conforme' : p.cantNC + ' no conformidad(es)'}</div>
-          </div>
-          <div class="estado-dot ${dotCls}">
-            <span class="nc-count">${dotIcon}</span>
+        <div style="padding:12px 14px;border-bottom:1px solid var(--border);">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;">
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:14px;font-weight:700;margin-bottom:${ncsHtml ? '6px' : '0'};">${p.Punto}</div>
+              ${ncsHtml}
+            </div>
+            <div style="display:flex;gap:6px;flex-shrink:0;">
+              <button onclick="marcarConformeDirecto('${p.Area}','${p.Sector}','${p.Subsector}','${p.Punto}','${p.Orden}')"
+                style="${btnConformeStyle}border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;font-family:'Syne',sans-serif;cursor:pointer;white-space:nowrap;">
+                ✓ Conforme
+              </button>
+              <button onclick="abrirNCDirecto('${p.Area}','${p.Sector}','${p.Subsector}','${p.Punto}','${p.Orden}')"
+                style="background:${p.estado==='nc'?'rgba(255,71,87,.15)':'transparent'};border:1.5px solid ${p.estado==='nc'?'var(--danger)':'var(--border)'};color:${p.estado==='nc'?'var(--danger)':'var(--muted)'};border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;font-family:'Syne',sans-serif;cursor:pointer;white-space:nowrap;">
+                ⚠ NC${p.cantNC > 0 ? ' ('+p.cantNC+')' : ''}
+              </button>
+            </div>
           </div>
         </div>
       `;
     }).join('');
 
-    // Hallazgos no listados ya registrados
+    // Hallazgos no listados
     const noListadosHtml = noListados.map(p => `
-      <div class="punto-item nc" onclick="openPunto('${p.Area}','${p.Sector}','${p.Subsector}','${encodeURIComponent(p.Punto)}','${p.Orden}')">
-        <div>
-          <div class="punto-nombre" style="color:var(--warn);">⚑ Hallazgo no listado</div>
-          <div class="punto-info">${p.cantNC} registro(s)</div>
+      <div style="padding:10px 14px;border-bottom:1px solid var(--border);background:rgba(255,165,2,.04);">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+          <div>
+            <div style="font-size:13px;font-weight:700;color:var(--warn);">⚑ Hallazgo no listado</div>
+            <div style="font-size:11px;color:var(--muted);">${p.cantNC} registro(s)</div>
+          </div>
+          <button onclick="abrirNCManual('${area}','${sector}','${subsector}')"
+            style="background:rgba(255,165,2,.1);border:1px solid var(--warn);color:var(--warn);
+                   border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;
+                   font-family:'Syne',sans-serif;cursor:pointer;">
+            + Agregar
+          </button>
         </div>
-        <div class="estado-dot nc"><span class="nc-count">${p.cantNC}</span></div>
       </div>
     `).join('');
 
-    // Botón registrar hallazgo no listado
+    // Botón hallazgo no listado
     const btnNoListado = `
       <div style="padding:10px 12px;border-top:1px dashed var(--border);">
         <button onclick="abrirNCManual('${area}','${sector}','${subsector}')"
@@ -867,20 +907,15 @@ function renderPuntos() {
       </div>
     `;
 
-    // Verificar si el sector está cerrado
+    // Cerrar sector
     const sectorCerrado = state.sectoresCerrados &&
       state.sectoresCerrados[area + '|' + sector + '|' + subsector];
-
-    // Última inspección de rutas anteriores
     const keySubsector = area + '|' + sector + '|' + subsector;
     const ultimaInsp = state.ultimaPorSubsector && state.ultimaPorSubsector[keySubsector];
-
-    // Verificar si todos los puntos del subsector están marcados
     const totalPuntos = puntos.length;
     const marcados = puntos.filter(p => p.estado !== 'pendiente').length;
     const todosCompletos = marcados === totalPuntos;
 
-    // Badge de cerrado o botón cerrar
     const cierreHtml = sectorCerrado
       ? `<div class="sector-cerrado-badge">
            <span style="flex:1;">✓ Sector cerrado — ${sectorCerrado}</span>
@@ -1029,7 +1064,33 @@ function checkValidationManual() {
   document.getElementById('btn-guardar-nc').disabled = !(fotoOk || obsOk || planoOk);
 }
 
-// ── Abrir punto detalle ──
+// ── Conforme directo desde la lista ──
+async function marcarConformeDirecto(area, sector, subsector, punto, orden) {
+  showToast('Guardando...', 'load', 0);
+  try {
+    const r = await api('marcarConforme', {
+      idRuta: state.rutaActiva.idRuta,
+      area, sector, subsector, punto, orden,
+      legajo: state.inspector.Legajo
+    });
+    if (!r.ok) { showToast(r.error || 'Error', 'err'); return; }
+    showToast('✓ Conforme guardado', 'ok');
+    actualizarAvanceLocal(area, sector, subsector, punto, 'conforme', 0, {});
+    renderPuntos();
+  } catch(e) { showToast('Error de conexión', 'err'); }
+}
+
+// ── Abrir NC directo desde la lista ──
+function abrirNCDirecto(area, sector, subsector, punto, orden) {
+  const p = state.avance.find(x =>
+    x.Area === area && x.Sector === sector && x.Subsector === subsector && x.Punto === punto
+  );
+  state.puntoActual = p || { Area: area, Sector: sector, Subsector: subsector, Punto: punto, Orden: orden, estado: 'pendiente', cantNC: 0 };
+  abrirFormNC();
+}
+
+// ══════════════════════════════════════════════════════
+// PUNTO DETALLE (se mantiene para acceso desde historial)
 async function openPunto(area, sector, subsector, punto, orden) {
   const p = state.avance.find(x =>
     x.Area === area && x.Sector === sector && x.Subsector === subsector && x.Punto === punto
