@@ -313,10 +313,16 @@
 <div id="screen-puntos" class="screen">
   <div class="header">
     <button class="back-btn" onclick="goSubsectores()">←</button>
-    <div>
+    <div style="flex:1;">
       <div class="header h1" id="puntos-title">Subsector</div>
       <div class="sub" id="puntos-sub"></div>
     </div>
+    <button id="btn-guardar-cambios" onclick="guardarCambios()"
+      style="background:var(--surface2);border:1px solid var(--accent2);color:var(--accent2);
+             border-radius:10px;padding:8px 14px;font-size:12px;font-weight:700;
+             font-family:'Syne',sans-serif;cursor:pointer;white-space:nowrap;flex-shrink:0;">
+      💾 Guardar
+    </button>
   </div>
   <div class="puntos-content" id="puntos-content"></div>
 </div>
@@ -779,11 +785,14 @@ async function openRuta(tipoRuta, idRuta) {
     state.avance    = avR.data?.puntos || [];
     state.ultimaPorSubsector = state.ultimaPorSubsectorGlobal?.[tipoRuta] || {};
 
-    // Reconstruir sectoresCerrados desde Sheets
+    // Reconstruir sectoresCerrados solo de la ruta activa
     state.sectoresCerrados = {};
     (avR.data?.sectorsCerrados || []).forEach(sc => {
-      const key = sc.Area + '|' + sc.Sector + '|' + sc.Subsector;
-      state.sectoresCerrados[key] = sc.FechaHora || 'cerrado';
+      // Solo incluir cierres de la ruta activa actual
+      if (sc.IDRuta === idRuta) {
+        const key = sc.Area + '|' + sc.Sector + '|' + sc.Subsector;
+        state.sectoresCerrados[key] = sc.FechaHora || 'cerrado';
+      }
     });
 
     renderRutaContent();
@@ -1178,13 +1187,128 @@ async function nuevaInspeccionSubsector(area, sector, subsector) {
   } catch(e) { showToast('Error de conexión', 'err'); }
 }
 
+// ── Sincronización en segundo plano ──
+const _pendienteSync = new Set();
+
+async function sincronizarPunto(area, sector, subsector, punto, orden, estado) {
+  const key = area+'|'+sector+'|'+subsector+'|'+punto;
+  _pendienteSync.add(key);
+  actualizarIndicadorSync();
+
+  try {
+    if (estado === 'conforme') {
+      await api('marcarConforme', {
+        idRuta: state.rutaActiva.idRuta,
+        area, sector, subsector, punto, orden,
+        legajo: state.inspector.Legajo
+      });
+    }
+    _pendienteSync.delete(key);
+    actualizarIndicadorSync();
+  } catch(e) {
+    // Silencioso — el botón guardar sirve como respaldo
+    _pendienteSync.delete(key);
+    actualizarIndicadorSync();
+  }
+}
+
+function actualizarIndicadorSync() {
+  const btn = document.getElementById('btn-guardar-cambios');
+  if (!btn) return;
+  if (_pendienteSync.size > 0) {
+    btn.textContent = '⏳ Sincronizando...';
+    btn.style.borderColor = 'var(--warn)';
+    btn.style.color = 'var(--warn)';
+  } else {
+    btn.textContent = '💾 Guardar';
+    btn.style.borderColor = 'var(--accent2)';
+    btn.style.color = 'var(--accent2)';
+  }
+}
+
+// ══════════════════════════════════════════════════════
+// GUARDAR CAMBIOS — envía estado local a Sheets
+// ══════════════════════════════════════════════════════
+async function guardarCambios(silencioso = false) {
+  const { area, sector, subsector } = state.sectorActual;
+  const btn = document.getElementById('btn-guardar-cambios');
+
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Guardando...'; }
+  if (!silencioso) showToast('Guardando cambios...', 'load', 0);
+
+  try {
+    const puntosSub = state.avance.filter(p =>
+      p.Area === area && p.Sector === sector && p.Subsector === subsector &&
+      p.Punto !== '✓ SECTOR CERRADO'
+    );
+
+    // Guardar conformes
+    const promesasConformes = puntosSub
+      .filter(p => p.estado === 'conforme')
+      .map(p => api('marcarConforme', {
+        idRuta:    state.rutaActiva.idRuta,
+        area:      p.Area,
+        sector:    p.Sector,
+        subsector: p.Subsector,
+        punto:     p.Punto,
+        orden:     p.Orden,
+        legajo:    state.inspector.Legajo
+      }));
+
+    // Guardar NCs
+    const promesasNC = puntosSub
+      .filter(p => p.estado === 'nc' && p.cantNC > 0)
+      .map(p => {
+        const ncs = [];
+        for (let i = 1; i <= p.cantNC; i++) {
+          ncs.push({
+            obs:   p['NC'+i+'_Obs']   || '',
+            foto1: p['NC'+i+'_Foto1'] || '',
+            foto2: p['NC'+i+'_Foto2'] || '',
+            plano: p['NC'+i+'_Plano'] || ''
+          });
+        }
+        return api('guardarNC', {
+          idRuta:    state.rutaActiva.idRuta,
+          area:      p.Area,
+          sector:    p.Sector,
+          subsector: p.Subsector,
+          punto:     p.Punto,
+          orden:     p.Orden,
+          legajo:    state.inspector.Legajo,
+          ncs
+        });
+      });
+
+    await Promise.all([...promesasConformes, ...promesasNC]);
+
+    if (!silencioso) showToast('✓ Cambios guardados correctamente', 'ok');
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '✓ Guardado';
+      btn.style.borderColor = 'var(--accent)';
+      btn.style.color = 'var(--accent)';
+      setTimeout(() => {
+        btn.textContent = '💾 Guardar';
+        btn.style.borderColor = 'var(--accent2)';
+        btn.style.color = 'var(--accent2)';
+      }, 3000);
+    }
+    return true;
+  } catch(e) {
+    showToast('Error al guardar', 'err');
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Guardar'; }
+    return false;
+  }
+}
+
 // ══════════════════════════════════════════════════════
 // CERRAR SECTOR
 // ══════════════════════════════════════════════════════
 async function cerrarSector(area, sector, subsector) {
   const puntosSector = state.avance.filter(p =>
     p.Area === area && p.Sector === sector && p.Subsector === subsector &&
-    p.Punto !== '⚑ Hallazgo no listado'
+    p.Punto !== '⚑ Hallazgo no listado' && p.Punto !== '✓ SECTOR CERRADO'
   );
   const conformes = puntosSector.filter(p => p.estado === 'conforme').length;
   const conNC     = puntosSector.filter(p => p.estado === 'nc').length;
@@ -1193,15 +1317,18 @@ async function cerrarSector(area, sector, subsector) {
   const msg = `Cerrar sector: ${subsector}\n\n✓ Conformes: ${conformes}\n⚠ Con NC: ${conNC}\nTotal: ${total}\n\n¿Confirmar cierre?`;
   if (!confirm(msg)) return;
 
-  // Guardar cierre en Sheets — usamos marcarConforme con punto especial
+  // Guardar cambios primero
+  showToast('Guardando cambios...', 'load', 0);
+  const guardado = await guardarCambios(true);
+  if (!guardado) return;
+
+  // Luego cerrar el sector
   showToast('Cerrando sector...', 'load', 0);
   try {
     const ahora = new Date().toLocaleString('es-PY', { timeZone: 'America/Asuncion' });
     const r = await api('marcarConforme', {
       idRuta:    state.rutaActiva.idRuta,
-      area,
-      sector,
-      subsector,
+      area, sector, subsector,
       punto:     '✓ SECTOR CERRADO',
       orden:     9999,
       legajo:    state.inspector.Legajo
@@ -1209,12 +1336,10 @@ async function cerrarSector(area, sector, subsector) {
     hideToast();
     if (!r.ok) { showToast(r.error || 'Error', 'err'); return; }
 
-    // Guardar localmente
     if (!state.sectoresCerrados) state.sectoresCerrados = {};
     state.sectoresCerrados[area + '|' + sector + '|' + subsector] = ahora;
 
     showToast('✓ Sector cerrado', 'ok');
-    // Volver a la pantalla de subsectores
     setTimeout(() => { goSubsectores(); }, 800);
   } catch(e) { showToast('Error de conexión', 'err'); }
 }
@@ -1273,20 +1398,12 @@ function checkValidationManual() {
   document.getElementById('btn-guardar-nc').disabled = !(fotoOk || obsOk || planoOk);
 }
 
-// ── Conforme directo desde la lista ──
-async function marcarConformeDirecto(area, sector, subsector, punto, orden) {
-  showToast('Guardando...', 'load', 0);
-  try {
-    const r = await api('marcarConforme', {
-      idRuta: state.rutaActiva.idRuta,
-      area, sector, subsector, punto, orden,
-      legajo: state.inspector.Legajo
-    });
-    if (!r.ok) { showToast(r.error || 'Error', 'err'); return; }
-    showToast('✓ Conforme guardado', 'ok');
-    actualizarAvanceLocal(area, sector, subsector, punto, 'conforme', 0, {});
-    renderPuntos();
-  } catch(e) { showToast('Error de conexión', 'err'); }
+// ── Conforme directo desde la lista — guarda en local y sincroniza en background ──
+function marcarConformeDirecto(area, sector, subsector, punto, orden) {
+  actualizarAvanceLocal(area, sector, subsector, punto, 'conforme', 0, {});
+  renderPuntos();
+  // Sincronizar en segundo plano
+  sincronizarPunto(area, sector, subsector, punto, orden, 'conforme');
 }
 
 // ── Abrir NC directo desde la lista ──
