@@ -1556,19 +1556,27 @@ function cargarPlano() {
 }
 
 function setupPlanoEvents(canvas) {
+  // Remover listeners previos clonando el canvas
+  const newCanvas = canvas.cloneNode(true);
+  canvas.parentNode.replaceChild(newCanvas, canvas);
+  // Reasignar ctx al nuevo canvas
+  planoCtx = newCanvas.getContext('2d');
+  planoCtx.drawImage(planoImg, 0, 0);
+
   const handler = (e) => {
     e.preventDefault();
+    e.stopPropagation();
     const clientE = e.touches ? e.touches[0] : e;
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width  / rect.width;
-    const scaleY = canvas.height / rect.height;
+    const rect = newCanvas.getBoundingClientRect();
+    const scaleX = newCanvas.width  / rect.width;
+    const scaleY = newCanvas.height / rect.height;
     const x = (clientE.clientX - rect.left) * scaleX;
     const y = (clientE.clientY - rect.top)  * scaleY;
     planoPunto = { x, y };
     // Redibujar plano + punto
-    planoCtx.clearRect(0, 0, canvas.width, canvas.height);
+    planoCtx.clearRect(0, 0, newCanvas.width, newCanvas.height);
     planoCtx.drawImage(planoImg, 0, 0);
-    const r = Math.max(12, canvas.width / 40);
+    const r = Math.max(16, newCanvas.width / 35);
     planoCtx.beginPath();
     planoCtx.arc(x, y, r, 0, Math.PI * 2);
     planoCtx.fillStyle = 'rgba(255,0,0,0.85)';
@@ -1577,11 +1585,12 @@ function setupPlanoEvents(canvas) {
     planoCtx.lineWidth = Math.max(2, r / 4);
     planoCtx.stroke();
     state.planoMarcadoOk = true;
-    state.planoMarcado   = canvas.toDataURL('image/jpeg', 0.85);
+    state.planoMarcado   = newCanvas.toDataURL('image/jpeg', 0.85);
     checkValidation();
   };
-  canvas.addEventListener('click',      handler);
-  canvas.addEventListener('touchend',   handler, { passive: false });
+
+  newCanvas.addEventListener('touchstart', handler, { passive: false });
+  newCanvas.addEventListener('click',      handler);
 }
 
 // ── Validación ──
