@@ -577,11 +577,56 @@ async function api(accion, body={}) {
 // ══════════════════════════════════════════════════════
 // NAVEGACIÓN
 // ══════════════════════════════════════════════════════
+// Orden de pantallas para navegación con botón atrás
+const SCREEN_BACK = {
+  'screen-home':         null,
+  'screen-ruta':         () => goHome(),
+  'screen-subsectores':  () => goRuta(),
+  'screen-puntos':       () => goSubsectores(),
+  'screen-punto':        () => goPuntos(),
+  'screen-nc':           () => goPunto(),
+};
+
 function showScreen(id) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById(id).classList.add('active');
   window.scrollTo(0,0);
+  // Pushear estado al historial para interceptar botón atrás del celular
+  history.pushState({ screen: id }, '', '');
 }
+
+// Interceptar botón atrás del celular
+window.addEventListener('popstate', function(e) {
+  const screenActual = document.querySelector('.screen.active')?.id;
+  if (!screenActual || screenActual === 'screen-login') return;
+
+  // Si está en home, confirmar salida
+  if (screenActual === 'screen-home') {
+    if (confirm('¿Salir de la aplicación?')) {
+      history.back();
+    } else {
+      history.pushState({ screen: screenActual }, '', '');
+    }
+    return;
+  }
+
+  // Si está en formulario NC con datos cargados, confirmar
+  if (screenActual === 'screen-nc') {
+    const tieneDatos = state.foto1DataUrl || state.foto2DataUrl || document.getElementById('nc-obs')?.value.trim();
+    if (tieneDatos) {
+      if (!confirm('¿Salir del formulario? Los datos no guardados se perderán.')) {
+        history.pushState({ screen: screenActual }, '', '');
+        return;
+      }
+    }
+  }
+
+  // Navegar a la pantalla anterior
+  const backFn = SCREEN_BACK[screenActual];
+  if (backFn) backFn();
+  else goHome();
+});
+
 function goHome()        { showScreen('screen-home'); }
 function goRuta()        { showScreen('screen-ruta'); }
 function goSubsectores() { showScreen('screen-subsectores'); renderSubsectores(); }
@@ -956,10 +1001,18 @@ function renderPuntos() {
 
     const estaConforme = p.estado === 'conforme';
     const tieneNC = p.estado === 'nc' && p.cantNC > 0;
+    const bloqueado = !!(state.sectoresCerrados?.[area+'|'+sector+'|'+subsector]);
+
     const btnConformeStyle = estaConforme
       ? `background:rgba(0,212,170,.2);border:1.5px solid var(--accent);color:var(--accent);`
-      : tieneNC
+      : bloqueado || tieneNC
         ? `background:transparent;border:1.5px solid var(--border);color:var(--border);cursor:not-allowed;opacity:.3;`
+        : `background:transparent;border:1.5px solid var(--border);color:var(--muted);`;
+
+    const btnNCStyle = bloqueado
+      ? `background:transparent;border:1.5px solid var(--border);color:var(--border);cursor:not-allowed;opacity:.3;`
+      : p.estado==='nc'
+        ? `background:rgba(255,71,87,.15);border:1.5px solid var(--danger);color:var(--danger);`
         : `background:transparent;border:1.5px solid var(--border);color:var(--muted);`;
 
     return `
@@ -970,13 +1023,14 @@ function renderPuntos() {
             ${ncsHtml}
           </div>
           <div style="display:flex;gap:6px;flex-shrink:0;">
-            <button onclick="${tieneNC ? '' : `marcarConformeDirecto('${p.Area}','${p.Sector}','${p.Subsector}','${p.Punto}','${p.Orden}')`}"
-              ${tieneNC ? 'disabled' : ''}
-              style="${btnConformeStyle}border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;font-family:'Syne',sans-serif;cursor:${tieneNC?'not-allowed':'pointer'};white-space:nowrap;">
+            <button onclick="${bloqueado || tieneNC ? '' : `marcarConformeDirecto('${p.Area}','${p.Sector}','${p.Subsector}','${p.Punto}','${p.Orden}')`}"
+              ${bloqueado || tieneNC ? 'disabled' : ''}
+              style="${btnConformeStyle}border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;font-family:'Syne',sans-serif;cursor:${bloqueado||tieneNC?'not-allowed':'pointer'};white-space:nowrap;">
               ✓ Conforme
             </button>
-            <button onclick="abrirNCDirecto('${p.Area}','${p.Sector}','${p.Subsector}','${p.Punto}','${p.Orden}')"
-              style="background:${p.estado==='nc'?'rgba(255,71,87,.15)':'transparent'};border:1.5px solid ${p.estado==='nc'?'var(--danger)':'var(--border)'};color:${p.estado==='nc'?'var(--danger)':'var(--muted)'};border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;font-family:'Syne',sans-serif;cursor:pointer;white-space:nowrap;">
+            <button onclick="${bloqueado ? '' : `abrirNCDirecto('${p.Area}','${p.Sector}','${p.Subsector}','${p.Punto}','${p.Orden}')`}"
+              ${bloqueado ? 'disabled' : ''}
+              style="${btnNCStyle}border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;font-family:'Syne',sans-serif;cursor:${bloqueado?'not-allowed':'pointer'};white-space:nowrap;">
               ⚠ NC${p.cantNC > 0 ? ' ('+p.cantNC+')' : ''}
             </button>
           </div>
@@ -985,7 +1039,9 @@ function renderPuntos() {
     `;
   }).join('');
 
-  const noListadosHtml = noListados.map(p => `
+  const noListadosHtml = noListados.map(p => {
+    const bloqueado = !!(state.sectoresCerrados?.[area+'|'+sector+'|'+subsector]);
+    return `
     <div style="padding:10px 14px;border-bottom:1px solid var(--border);background:rgba(255,165,2,.04);">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
         <div>
@@ -1000,7 +1056,7 @@ function renderPuntos() {
         </button>
       </div>
     </div>
-  `).join('');
+  `}).join('');
 
   const btnNoListado = `
     <div style="padding:10px 12px;border-top:1px dashed var(--border);">
@@ -1016,6 +1072,18 @@ function renderPuntos() {
   `;
 
   const sectorCerrado = state.sectoresCerrados?.[area+'|'+sector+'|'+subsector];
+  const btnNoListado = `
+    <div style="padding:10px 12px;border-top:1px dashed var(--border);">
+      <button onclick="abrirNCManual('${area}','${sector}','${subsector}')"
+        style="width:100%;background:transparent;border:1px dashed var(--warn);color:var(--warn);
+               border-radius:10px;padding:10px 14px;font-size:12px;font-weight:600;
+               font-family:'Syne',sans-serif;cursor:pointer;display:flex;align-items:center;
+               justify-content:center;gap:8px;">
+        ＋ Registrar hallazgo no listado
+        <span style="font-size:10px;font-weight:400;color:var(--muted);">para algo fuera de la lista</span>
+      </button>
+    </div>
+  `;
   const ultimaInsp = state.ultimaPorSubsector?.[area+'|'+sector+'|'+subsector];
   const totalPuntos = puntosSub.length;
   const marcados = puntosSub.filter(p => p.estado !== 'pendiente').length;
