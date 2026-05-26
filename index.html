@@ -1419,34 +1419,48 @@ async function generarPDF(area, sector, subsector) {
 }
 
 function driveThumbUrl(url) {
-  // Convertir URL de Drive a thumbnail URL que permite crossOrigin
   if (!url) return url;
-  const match = url.match(/[?&]id=([^&]+)/);
-  if (match) {
-    return `https://drive.google.com/thumbnail?id=${match[1]}&sz=w600`;
-  }
+  // Extraer ID de cualquier formato de URL de Drive
+  let id = null;
+  const m1 = url.match(/[?&]id=([^&]+)/);
+  const m2 = url.match(/\/d\/([^/]+)/);
+  const m3 = url.match(/thumbnail\?id=([^&]+)/);
+  if (m1) id = m1[1];
+  else if (m2) id = m2[1];
+  else if (m3) id = m3[1];
+  if (id) return `https://lh3.googleusercontent.com/d/${id}`;
   return url;
 }
 
 // ── Cargar imagen como base64 para jsPDF ──
 function cargarImagenComoBase64(url) {
   return new Promise((resolve, reject) => {
-    const thumbUrl = driveThumbUrl(url);
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width  = img.naturalWidth  || img.width  || 600;
-      canvas.height = img.naturalHeight || img.height || 450;
-      canvas.getContext('2d').drawImage(img, 0, 0);
-      try {
-        resolve(canvas.toDataURL('image/jpeg', 0.85));
-      } catch(e) {
-        reject(e);
-      }
-    };
-    img.onerror = () => reject(new Error('No se pudo cargar imagen'));
-    img.src = thumbUrl;
+    // Intentar múltiples formatos de URL
+    const urls = [
+      driveThumbUrl(url),
+      url.replace('uc?export=view', 'uc?export=download'),
+      url
+    ];
+
+    function tryUrl(idx) {
+      if (idx >= urls.length) { reject(new Error('No se pudo cargar')); return; }
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      const timer = setTimeout(() => { img.src = ''; tryUrl(idx + 1); }, 5000);
+      img.onload = () => {
+        clearTimeout(timer);
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width  = img.naturalWidth  || 800;
+          canvas.height = img.naturalHeight || 600;
+          canvas.getContext('2d').drawImage(img, 0, 0);
+          resolve(canvas.toDataURL('image/jpeg', 0.85));
+        } catch(e) { tryUrl(idx + 1); }
+      };
+      img.onerror = () => { clearTimeout(timer); tryUrl(idx + 1); };
+      img.src = urls[idx];
+    }
+    tryUrl(0);
   });
 }
 // ══════════════════════════════════════════════════════
