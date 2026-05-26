@@ -985,13 +985,15 @@ function renderSubsectores() {
     const chipCls = cerrado ? 'done' : pct === 100 ? 'done' : pct > 0 ? 'partial' : '';
     const chipLabel = cerrado ? '✓ Cerrado' : pct + '%';
 
+    const esCerrado = !!(cerrado) || chipLabel === '✓ Cerrado';
+
     return `
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:10px;overflow:hidden;">
-        <div class="sector-item" onclick="openSubsector('${area}','${sector}','${sub}')" style="border-bottom:${cerrado?'1px solid var(--border)':'none'};">
+        <div class="sector-item" onclick="openSubsector('${area}','${sector}','${sub}')" style="border-bottom:${esCerrado?'1px solid var(--border)':'none'};">
           <div style="flex:1;">
             <div class="sector-name">${sub}</div>
             <div class="sector-sub">
-              ${cerrado ? `Cerrado — ${cerrado}` : `${marcados}/${total} puntos${conNC > 0 ? ` · ${conNC} NC` : ''}`}
+              ${esCerrado ? `Cerrado — ${cerrado || ''}` : `${marcados}/${total} puntos${conNC > 0 ? ` · ${conNC} NC` : ''}`}
             </div>
             ${ultima ? `<div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">Última: ${ultima.fecha} — ${ultima.inspector}</div>` : ''}
           </div>
@@ -1000,7 +1002,7 @@ function renderSubsectores() {
             <span style="color:var(--muted)">›</span>
           </div>
         </div>
-        ${cerrado ? `
+        ${esCerrado ? `
         <div style="padding:10px 14px;display:flex;gap:8px;">
           <button onclick="event.stopPropagation();generarPDF('${area}','${sector}','${sub}')"
             style="flex:1;background:rgba(0,212,170,.1);border:1px solid var(--accent);color:var(--accent);
