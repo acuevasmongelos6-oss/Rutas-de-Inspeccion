@@ -970,23 +970,34 @@ function renderSubsectores() {
     const chipLabel = cerrado ? '✓ Cerrado' : pct + '%';
 
     return `
-      <div class="sector-item" onclick="openSubsector('${area}','${sector}','${sub}')">
-        <div style="flex:1;">
-          <div class="sector-name">${sub}</div>
-          <div class="sector-sub">
-            ${cerrado ? `Cerrado — ${cerrado}` : `${marcados}/${total} puntos${conNC > 0 ? ` · ${conNC} NC` : ''}`}
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:10px;overflow:hidden;">
+        <div class="sector-item" onclick="openSubsector('${area}','${sector}','${sub}')" style="border-bottom:${cerrado?'1px solid var(--border)':'none'};">
+          <div style="flex:1;">
+            <div class="sector-name">${sub}</div>
+            <div class="sector-sub">
+              ${cerrado ? `Cerrado — ${cerrado}` : `${marcados}/${total} puntos${conNC > 0 ? ` · ${conNC} NC` : ''}`}
+            </div>
+            ${ultima ? `<div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">Última: ${ultima.fecha} — ${ultima.inspector}</div>` : ''}
           </div>
-          ${ultima ? `<div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">Última: ${ultima.fecha} — ${ultima.inspector}</div>` : ''}
+          <div class="sector-right">
+            <span class="pct-chip ${chipCls}">${chipLabel}</span>
+            <span style="color:var(--muted)">›</span>
+          </div>
         </div>
-        <div class="sector-right">
-          <span class="pct-chip ${chipCls}">${chipLabel}</span>
-          <span style="color:var(--muted)">›</span>
-        </div>
+        ${cerrado ? `
+        <div style="padding:10px 14px;display:flex;gap:8px;">
+          <button onclick="event.stopPropagation();generarPDF('${area}','${sector}','${sub}')"
+            style="flex:1;background:rgba(0,212,170,.1);border:1px solid var(--accent);color:var(--accent);
+                   border-radius:8px;padding:10px;font-size:12px;font-weight:700;
+                   font-family:'Syne',sans-serif;cursor:pointer;">
+            📄 Generar PDF
+          </button>
+        </div>` : ''}
       </div>
     `;
   }).join('');
 
-  content.innerHTML = `<div class="area-group" style="margin:16px;">${html}</div>`;
+  content.innerHTML = `<div style="padding:16px;">${html}</div>`;
 }
 
 async function openSubsector(area, sector, subsector) {
@@ -1222,7 +1233,211 @@ function actualizarIndicadorSync() {
 }
 
 // ══════════════════════════════════════════════════════
-// GUARDAR CAMBIOS — envía estado local a Sheets
+// GENERAR PDF
+// ══════════════════════════════════════════════════════
+async function generarPDF(area, sector, subsector) {
+  showToast('Preparando PDF...', 'load', 0);
+
+  try {
+    // Cargar jsPDF dinámicamente
+    if (!window.jspdf) {
+      await new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+        script.onload = resolve;
+        script.onerror = reject;
+        document.head.appendChild(script);
+      });
+    }
+
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const W = 210; // ancho A4
+    const margin = 15;
+    let y = margin;
+
+    // Colores
+    const colorPrimario  = [0, 100, 80];
+    const colorNC        = [200, 50, 50];
+    const colorGris      = [100, 100, 100];
+    const colorBorde     = [220, 220, 220];
+
+    // ── Encabezado ──
+    doc.setFillColor(20, 25, 40);
+    doc.rect(0, 0, W, 35, 'F');
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text('INFORME DE INSPECCIÓN', margin, 13);
+
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(180, 190, 210);
+    const tipoLabel = state.tipoRutaSeleccionada === 'EST' ? 'Ruta Estructural' : 'Ruta Máquinas y Equipos';
+    doc.text(`${tipoLabel}  ›  ${area}  ›  ${sector}  ›  ${subsector}`, margin, 21);
+    doc.text(`Inspector: ${state.inspector.Nombre}  |  Legajo: ${state.inspector.Legajo}  |  Fecha: ${new Date().toLocaleDateString('es-PY')}`, margin, 28);
+
+    y = 45;
+
+    // ── Resumen ──
+    const puntosSub = state.avance.filter(p =>
+      p.Area === area && p.Sector === sector && p.Subsector === subsector &&
+      p.Punto !== '✓ SECTOR CERRADO' && p.Punto !== '⚑ Hallazgo no listado'
+    );
+    const noListados = state.avance.filter(p =>
+      p.Area === area && p.Sector === sector && p.Subsector === subsector &&
+      p.Punto === '⚑ Hallazgo no listado'
+    );
+    const totalPuntos  = puntosSub.length;
+    const conformes    = puntosSub.filter(p => p.estado === 'conforme').length;
+    const conNC        = puntosSub.filter(p => p.estado === 'nc').length;
+    const totalNC      = puntosSub.reduce((acc, p) => acc + (Number(p.cantNC) || 0), 0) + noListados.reduce((acc, p) => acc + (Number(p.cantNC) || 0), 0);
+
+    doc.setFillColor(240, 245, 240);
+    doc.rect(margin, y, W - margin*2, 20, 'F');
+    doc.setDrawColor(...colorBorde);
+    doc.rect(margin, y, W - margin*2, 20, 'S');
+
+    doc.setTextColor(...colorPrimario);
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'bold');
+    doc.text('RESUMEN', margin + 4, y + 7);
+
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(50, 50, 50);
+    doc.text(`✓ Conformes: ${conformes}   ⚠ Con NC: ${conNC}   Total NC: ${totalNC}   Total puntos: ${totalPuntos}`, margin + 4, y + 15);
+    y += 28;
+
+    // ── Puntos ──
+    const todosLosPuntos = [...puntosSub, ...noListados].sort((a,b) => Number(a.Orden) - Number(b.Orden));
+
+    for (const p of todosLosPuntos) {
+      // Verificar espacio en página
+      if (y > 260) { doc.addPage(); y = margin; }
+
+      const esNC = p.estado === 'nc' && p.cantNC > 0;
+      const esNoListado = p.Punto === '⚑ Hallazgo no listado';
+
+      // Título del punto
+      doc.setFillColor(esNC || esNoListado ? 255 : 245, esNC || esNoListado ? 240 : 250, esNC || esNoListado ? 240 : 245);
+      doc.rect(margin, y, W - margin*2, 10, 'F');
+      doc.setDrawColor(...colorBorde);
+      doc.rect(margin, y, W - margin*2, 10, 'S');
+
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      if (esNC || esNoListado) {
+        doc.setTextColor(colorNC[0], colorNC[1], colorNC[2]);
+      } else {
+        doc.setTextColor(colorPrimario[0], colorPrimario[1], colorPrimario[2]);
+      }
+      doc.text(p.Punto, margin + 4, y + 7);
+
+      const estadoLabel = p.estado === 'conforme' ? '✓ CONFORME' : p.cantNC > 0 ? `⚠ ${p.cantNC} NC` : 'PENDIENTE';
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(...colorGris);
+      doc.text(estadoLabel, W - margin - 4, y + 7, { align: 'right' });
+      y += 12;
+
+      // NCs del punto
+      if (esNC || esNoListado) {
+        const cantNC = Number(p.cantNC) || 0;
+        for (let i = 1; i <= cantNC; i++) {
+          if (y > 250) { doc.addPage(); y = margin; }
+
+          const obs   = p['NC'+i+'_Obs']   || '';
+          const foto1 = p['NC'+i+'_Foto1'] || '';
+          const foto2 = p['NC'+i+'_Foto2'] || '';
+          const plano = p['NC'+i+'_Plano'] || '';
+
+          // Número NC
+          doc.setFontSize(8);
+          doc.setFont('helvetica', 'bold');
+          doc.setTextColor(...colorNC);
+          doc.text(`NC #${i}`, margin + 4, y + 5);
+          y += 8;
+
+          // Observación
+          if (obs) {
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor(50, 50, 50);
+            doc.setFontSize(8);
+            const lines = doc.splitTextToSize(obs, W - margin*2 - 8);
+            lines.forEach(line => {
+              if (y > 270) { doc.addPage(); y = margin; }
+              doc.text(line, margin + 8, y);
+              y += 5;
+            });
+            y += 2;
+          }
+
+          // Fotos e imágenes
+          const imagenes = [foto1, foto2, plano].filter(Boolean);
+          if (imagenes.length > 0) {
+            showToast(`Cargando imágenes NC #${i}...`, 'load', 0);
+            const imgWidth = (W - margin*2 - (imagenes.length - 1) * 4) / imagenes.length;
+
+            for (let j = 0; j < imagenes.length; j++) {
+              if (y + 45 > 275) { doc.addPage(); y = margin; }
+              try {
+                const imgData = await cargarImagenComoBase64(imagenes[j]);
+                const label = j === 2 ? 'Plano' : `Foto ${j+1}`;
+                doc.setFontSize(7);
+                doc.setTextColor(...colorGris);
+                doc.text(label, margin + 8 + j * (imgWidth + 4), y);
+                doc.addImage(imgData, 'JPEG', margin + 8 + j * (imgWidth + 4), y + 3, imgWidth - 4, 38);
+              } catch(e) {
+                doc.setFontSize(7);
+                doc.setTextColor(...colorGris);
+                doc.text('[Imagen no disponible]', margin + 8 + j * (imgWidth + 4), y + 10);
+              }
+            }
+            y += 46;
+          }
+          y += 4;
+        }
+      }
+      y += 4;
+    }
+
+    // ── Pie de página en todas las páginas ──
+    const totalPags = doc.getNumberOfPages();
+    for (let i = 1; i <= totalPags; i++) {
+      doc.setPage(i);
+      doc.setFontSize(7);
+      doc.setTextColor(...colorGris);
+      doc.text(`Página ${i} de ${totalPags}  |  ${subsector} — ${sector}  |  ${new Date().toLocaleDateString('es-PY')}`,
+        W / 2, 292, { align: 'center' });
+    }
+
+    hideToast();
+    showToast('✓ PDF generado', 'ok');
+
+    // Guardar PDF
+    const nombreArchivo = `Inspeccion_${subsector.replace(/\s+/g,'-')}_${new Date().toISOString().slice(0,10)}.pdf`;
+    doc.save(nombreArchivo);
+
+  } catch(e) {
+    hideToast();
+    showToast('Error al generar PDF: ' + e.message, 'err');
+    console.error(e);
+  }
+}
+
+// ── Cargar imagen como base64 para jsPDF ──
+async function cargarImagenComoBase64(url) {
+  const response = await fetch(url);
+  const blob = await response.blob();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
 // ══════════════════════════════════════════════════════
 async function guardarCambios(silencioso = false) {
   const { area, sector, subsector } = state.sectorActual;
