@@ -1139,16 +1139,26 @@ async function nuevaInspeccionSubsector(area, sector, subsector) {
 
   showToast('Iniciando nueva inspección...', 'load', 0);
   try {
-    // Si la ruta actual está completada, crear una nueva
+    let idRuta = null;
+
+    // Intentar crear nueva ruta
     const r = await api('iniciarRuta', {
       legajo:   state.inspector.Legajo,
       tipoRuta: state.tipoRutaSeleccionada
     });
 
-    if (!r.ok) { showToast(r.error || 'Error al iniciar', 'err'); return; }
+    if (r.ok) {
+      idRuta = r.data.idRuta;
+    } else if (r.idRuta) {
+      // Ya hay una ruta en curso — usarla
+      idRuta = r.idRuta;
+    } else {
+      showToast(r.error || 'Error al iniciar', 'err');
+      return;
+    }
 
     // Actualizar IDRuta activa
-    state.rutaActiva = { tipoRuta: state.tipoRutaSeleccionada, idRuta: r.data.idRuta };
+    state.rutaActiva = { tipoRuta: state.tipoRutaSeleccionada, idRuta };
 
     // Resetear puntos del subsector en el estado local
     state.avance = state.avance.map(p => {
