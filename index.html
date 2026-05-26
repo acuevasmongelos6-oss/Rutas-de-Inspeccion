@@ -1379,14 +1379,19 @@ async function generarPDF(area, sector, subsector) {
                 doc.setFontSize(7);
                 doc.setTextColor(...colorGris);
                 doc.text(label, margin + 8 + j * (imgWidth + 4), y);
-                doc.addImage(imgData, 'JPEG', margin + 8 + j * (imgWidth + 4), y + 3, imgWidth - 4, 38);
+                // Calcular alto respetando aspect ratio
+                const tempImg = new Image();
+                await new Promise(res => { tempImg.onload = res; tempImg.onerror = res; tempImg.src = imgData; });
+                const ratio = tempImg.naturalHeight > 0 ? tempImg.naturalWidth / tempImg.naturalHeight : 4/3;
+                const imgH = Math.min(60, (imgWidth - 4) / ratio);
+                doc.addImage(imgData, 'JPEG', margin + 8 + j * (imgWidth + 4), y + 3, imgWidth - 4, imgH);
               } catch(e) {
                 doc.setFontSize(7);
                 doc.setTextColor(...colorGris);
                 doc.text('[Imagen no disponible]', margin + 8 + j * (imgWidth + 4), y + 10);
               }
             }
-            y += 46;
+            y += Math.min(70, 46);
           }
           y += 4;
         }
@@ -1451,9 +1456,11 @@ function cargarImagenComoBase64(url) {
         clearTimeout(timer);
         try {
           const canvas = document.createElement('canvas');
-          canvas.width  = img.naturalWidth  || 800;
-          canvas.height = img.naturalHeight || 600;
-          canvas.getContext('2d').drawImage(img, 0, 0);
+          const w = img.naturalWidth  || 800;
+          const h = img.naturalHeight || 600;
+          canvas.width  = w;
+          canvas.height = h;
+          canvas.getContext('2d').drawImage(img, 0, 0, w, h);
           resolve(canvas.toDataURL('image/jpeg', 0.85));
         } catch(e) { tryUrl(idx + 1); }
       };
