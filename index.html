@@ -913,17 +913,38 @@ function toggleArea(idx) {
 // INICIAR RUTA
 // ══════════════════════════════════════════════════════
 async function iniciarRuta() {
-  showToast('Iniciando ruta...', 'load', 0);
+  // Generar IDRuta local — se creará en Sheets al guardar el primer punto
+  const idRuta = state.tipoRutaSeleccionada + '-' + Date.now();
+  state.rutaActiva = { tipoRuta: state.tipoRutaSeleccionada, idRuta, pendienteCreacion: true };
+  state.avance = [];
+  state.sectoresCerrados = {};
+  showToast('Ruta lista — empezá a inspeccionar', 'ok');
+  await openRuta(state.tipoRutaSeleccionada, idRuta);
+}
+
+// ── Crear ruta en Sheets si todavía no existe (lazy creation) ──
+async function asegurarRutaEnSheets() {
+  if (!state.rutaActiva?.pendienteCreacion) return true;
   try {
     const r = await api('iniciarRuta', {
-      legajo: state.inspector.Legajo,
+      legajo:   state.inspector.Legajo,
       tipoRuta: state.tipoRutaSeleccionada
     });
-    hideToast();
-    if (!r.ok) { showToast(r.error || 'Error al iniciar', 'err'); return; }
-    showToast('¡Ruta iniciada!', 'ok');
-    await openRuta(state.tipoRutaSeleccionada, r.data.idRuta);
-  } catch(e) { showToast('Error de conexión', 'err'); }
+    if (r.ok) {
+      // Usar el IDRuta real de Sheets
+      state.rutaActiva = { tipoRuta: state.tipoRutaSeleccionada, idRuta: r.data.idRuta };
+      return true;
+    } else if (r.idRuta) {
+      // Ya existe una en curso — usarla
+      state.rutaActiva = { tipoRuta: state.tipoRutaSeleccionada, idRuta: r.idRuta };
+      return true;
+    }
+    showToast(r.error || 'Error al crear ruta', 'err');
+    return false;
+  } catch(e) {
+    showToast('Error de conexión', 'err');
+    return false;
+  }
 }
 
 // ══════════════════════════════════════════════════════
@@ -1227,29 +1248,22 @@ async function nuevaInspeccionSubsector(area, sector, subsector) {
 
   showToast('Iniciando nueva inspección...', 'load', 0);
   try {
-    // Paso 1: cerrar la ruta actual si está en curso
-    if (state.rutaActiva?.idRuta) {
+    // Paso 1: cerrar la ruta actual si está en curso (no si es pendiente de creación)
+    if (state.rutaActiva?.idRuta && !state.rutaActiva?.pendienteCreacion) {
       await api('cerrarRuta', { idRuta: state.rutaActiva.idRuta });
     }
 
-    // Paso 2: crear nueva ruta
-    const r = await api('iniciarRuta', {
-      legajo:   state.inspector.Legajo,
-      tipoRuta: state.tipoRutaSeleccionada
-    });
+    // Paso 2: generar ID local — se creará en Sheets al primer guardado
+    const idRuta = state.tipoRutaSeleccionada + '-' + Date.now();
+    state.rutaActiva = { tipoRuta: state.tipoRutaSeleccionada, idRuta, pendienteCreacion: true };
 
-    if (!r.ok) { showToast(r.error || 'Error al iniciar', 'err'); return; }
-
-    const idRuta = r.data.idRuta;
-
-    // Paso 3: actualizar estado con nueva ruta — pizarra limpia
-    state.rutaActiva = { tipoRuta: state.tipoRutaSeleccionada, idRuta };
+    // Paso 3: pizarra limpia
     const [plantR, avR] = await Promise.all([
       api('getPlantilla', { ruta: state.tipoRutaSeleccionada }),
-      api('getAvance', { idRuta })
+      Promise.resolve({ data: { puntos: [], sectorsCerrados: [] } }) // vacío, no hay nada en Sheets aún
     ]);
     state.plantilla = plantR.data || [];
-    state.avance    = avR.data?.puntos || [];
+    state.avance    = [];
     state.sectoresCerrados = {};
 
     hideToast();
@@ -1273,6 +1287,9 @@ async function sincronizarPunto(area, sector, subsector, punto, orden, estado) {
   actualizarIndicadorSync();
 
   try {
+    // Crear ruta en Sheets si es la primera vez
+    await asegurarRutaEnSheets();
+
     if (estado === 'conforme') {
       await api('marcarConforme', {
         idRuta: state.rutaActiva.idRuta,
@@ -1532,6 +1549,10 @@ function cargarImagenComoBase64(url) {
 async function guardarCambios(silencioso = false) {
   const { area, sector, subsector } = state.sectorActual;
   const btn = document.getElementById('btn-guardar-cambios');
+
+  // Crear ruta en Sheets si es la primera vez
+  const creada = await asegurarRutaEnSheets();
+  if (!creada) return false;
 
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Guardando...'; }
   if (!silencioso) showToast('Guardando cambios...', 'load', 0);
@@ -2221,6 +2242,10 @@ async function guardarNC() {
   btn.disabled = true;
   btn.textContent = 'Guardando...';
   showToast('Guardando...', 'load', 0);
+
+  // Crear ruta en Sheets si es la primera vez
+  const creada = await asegurarRutaEnSheets();
+  if (!creada) { btn.disabled = false; btn.textContent = 'Guardar NC'; return; }
 
   try {
     const foto1Url = state.foto1Url || '';
