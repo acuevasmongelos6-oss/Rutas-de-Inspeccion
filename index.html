@@ -1145,27 +1145,23 @@ async function nuevaInspeccionSubsector(area, sector, subsector) {
 
   showToast('Iniciando nueva inspección...', 'load', 0);
   try {
-    let idRuta = null;
+    // Paso 1: cerrar la ruta actual si está en curso
+    if (state.rutaActiva?.idRuta) {
+      await api('cerrarRuta', { idRuta: state.rutaActiva.idRuta });
+    }
 
-    // Intentar crear nueva ruta
+    // Paso 2: crear nueva ruta
     const r = await api('iniciarRuta', {
       legajo:   state.inspector.Legajo,
       tipoRuta: state.tipoRutaSeleccionada
     });
 
-    if (r.ok) {
-      idRuta = r.data.idRuta;
-    } else if (r.idRuta) {
-      idRuta = r.idRuta;
-    } else {
-      showToast(r.error || 'Error al iniciar', 'err');
-      return;
-    }
+    if (!r.ok) { showToast(r.error || 'Error al iniciar', 'err'); return; }
 
-    // Actualizar IDRuta activa
+    const idRuta = r.data.idRuta;
+
+    // Paso 3: actualizar estado con nueva ruta — pizarra limpia
     state.rutaActiva = { tipoRuta: state.tipoRutaSeleccionada, idRuta };
-
-    // Recargar plantilla y avance con el nuevo idRuta — pizarra limpia
     const [plantR, avR] = await Promise.all([
       api('getPlantilla', { ruta: state.tipoRutaSeleccionada }),
       api('getAvance', { idRuta })
@@ -1173,7 +1169,6 @@ async function nuevaInspeccionSubsector(area, sector, subsector) {
     state.plantilla = plantR.data || [];
     state.avance    = avR.data?.puntos || [];
     state.sectoresCerrados = {};
-    // La nueva ruta no tiene cierres — sectoresCerrados queda vacío
 
     hideToast();
     showToast('✓ Nueva inspección iniciada', 'ok');
