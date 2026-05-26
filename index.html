@@ -361,21 +361,31 @@
             <div class="foto-icon">📷</div>
             <div class="foto-label">Foto 1</div>
             <div class="foto-overlay">
-              <button class="foto-action-btn" onclick="e=>{e.stopPropagation();marcarFoto(1)}">✏️</button>
-              <button class="foto-action-btn" onclick="e=>{e.stopPropagation();quitarFoto(1)}">🗑️</button>
+              <button class="foto-action-btn" onclick="event.stopPropagation();marcarFoto(1)">✏️</button>
+              <button class="foto-action-btn" onclick="event.stopPropagation();quitarFoto(1)">🗑️</button>
             </div>
           </div>
           <div class="foto-slot" id="slot-foto2" onclick="selectFoto(2)">
             <div class="foto-icon">📷</div>
             <div class="foto-label">Foto 2 (opcional)</div>
             <div class="foto-overlay">
-              <button class="foto-action-btn">✏️</button>
-              <button class="foto-action-btn">🗑️</button>
+              <button class="foto-action-btn" onclick="event.stopPropagation();marcarFoto(2)">✏️</button>
+              <button class="foto-action-btn" onclick="event.stopPropagation();quitarFoto(2)">🗑️</button>
             </div>
           </div>
         </div>
         <input type="file" id="file-foto1" accept="image/*" capture="environment" onchange="onFotoSelected(1)">
         <input type="file" id="file-foto2" accept="image/*" capture="environment" onchange="onFotoSelected(2)">
+
+        <!-- Botón subir fotos -->
+        <div id="btn-subir-fotos-wrapper" style="display:none;margin-top:10px;">
+          <button id="btn-subir-fotos" onclick="subirFotosManual()"
+            style="width:100%;background:var(--accent2);border:none;color:#fff;border-radius:10px;
+                   padding:12px;font-size:14px;font-weight:700;font-family:'Syne',sans-serif;cursor:pointer;">
+            ↑ Subir foto(s)
+          </button>
+          <div id="fotos-status" style="font-size:11px;text-align:center;margin-top:6px;font-family:'DM Mono',monospace;color:var(--muted);"></div>
+        </div>
 
         <!-- Canvas para marcar foto -->
         <div id="canvas-foto-section" style="display:none; margin-top:14px;">
@@ -395,16 +405,6 @@
       </div>
     </div>
 
-    <!-- OBSERVACIÓN -->
-    <div class="form-section">
-      <div class="form-section-title">
-        📝 Observación <span class="required-badge">REQUERIDO</span>
-      </div>
-      <div class="form-section-body">
-        <textarea class="obs-textarea" id="nc-obs" placeholder="Describí el problema encontrado..." oninput="checkValidation()"></textarea>
-      </div>
-    </div>
-
     <!-- PLANO -->
     <div class="form-section">
       <div class="form-section-title">
@@ -421,7 +421,26 @@
             <canvas id="canvas-plano"></canvas>
           </div>
           <div class="plano-hint" id="plano-hint" style="display:none;">Tocá el plano para marcar la ubicación del hallazgo</div>
+          <!-- Botón identificar lugar -->
+          <div id="btn-identificar-wrapper" style="display:none;margin-top:10px;">
+            <button id="btn-identificar" onclick="identificarLugar()"
+              style="width:100%;background:var(--accent2);border:none;color:#fff;border-radius:10px;
+                     padding:12px;font-size:14px;font-weight:700;font-family:'Syne',sans-serif;cursor:pointer;">
+              📍 Identificar lugar
+            </button>
+            <div id="plano-status" style="font-size:11px;text-align:center;margin-top:6px;font-family:'DM Mono',monospace;color:var(--muted);"></div>
+          </div>
         </div>
+      </div>
+    </div>
+
+    <!-- OBSERVACIÓN -->
+    <div class="form-section">
+      <div class="form-section-title">
+        📝 Observación <span class="required-badge">REQUERIDO</span>
+      </div>
+      <div class="form-section-body">
+        <textarea class="obs-textarea" id="nc-obs" placeholder="Describí el problema encontrado..." oninput="checkValidation()"></textarea>
       </div>
     </div>
 
@@ -1369,7 +1388,7 @@ function abrirFormNC() {
   // Reset form
   state.foto1 = null; state.foto1DataUrl = null; state.foto1Marcada = null; state.foto1Url = null;
   state.foto2 = null; state.foto2DataUrl = null; state.foto2Marcada = null; state.foto2Url = null;
-  state.planoMarcado = null; state.planoMarcadoOk = false;
+  state.planoMarcado = null; state.planoMarcadoOk = false; state.planoUrl = null;
 
   document.getElementById('nc-header-title').textContent = 'No Conformidad';
   document.getElementById('nc-header-sub').textContent = p.Punto + ' · ' + p.Subsector;
@@ -1377,7 +1396,12 @@ function abrirFormNC() {
   document.getElementById('canvas-foto-section').style.display = 'none';
   document.getElementById('btn-guardar-nc').style.display = 'block';
   document.getElementById('btn-guardar-nc').disabled = true;
+  document.getElementById('btn-guardar-nc').textContent = 'Guardar NC';
   document.getElementById('panel-post-nc').style.display = 'none';
+  document.getElementById('btn-subir-fotos-wrapper').style.display = 'none';
+  document.getElementById('fotos-status').textContent = '';
+  document.getElementById('btn-identificar-wrapper').style.display = 'none';
+  document.getElementById('plano-status').textContent = '';
 
   // Ocultar aclaración manual
   const aclaracion = document.getElementById('nc-manual-aclaracion');
@@ -1412,9 +1436,65 @@ function onFotoSelected(n) {
     else         { state.foto2 = dataUrl; state.foto2DataUrl = dataUrl; state.foto2Marcada = null; state.foto2Url = null; }
     mostrarFotoEnSlot(n, dataUrl);
     checkValidation();
-    // Subir a Drive en segundo plano
-    subirFotoEnBackground(n, dataUrl);
+    // Mostrar botón subir fotos
+    document.getElementById('btn-subir-fotos-wrapper').style.display = 'block';
+    document.getElementById('fotos-status').textContent = 'Foto lista — tocá "Subir foto(s)" cuando estés listo';
   });
+}
+
+async function subirFotosManual() {
+  const btn = document.getElementById('btn-subir-fotos');
+  const status = document.getElementById('fotos-status');
+  btn.disabled = true;
+  btn.textContent = 'Subiendo...';
+  status.style.color = 'var(--accent2)';
+  status.textContent = 'Subiendo fotos...';
+
+  try {
+    if (state.foto1 && !state.foto1Url) {
+      status.textContent = 'Subiendo foto 1...';
+      state.foto1Url = await subirFotoAPI(state.foto1, 'foto1_' + Date.now() + '.jpg');
+    }
+    if (state.foto2 && !state.foto2Url) {
+      status.textContent = 'Subiendo foto 2...';
+      state.foto2Url = await subirFotoAPI(state.foto2, 'foto2_' + Date.now() + '.jpg');
+    }
+    btn.textContent = '✓ Fotos subidas';
+    btn.style.background = 'var(--accent)';
+    status.style.color = 'var(--accent)';
+    status.textContent = '✓ Fotos guardadas correctamente';
+    checkValidation();
+  } catch(e) {
+    btn.disabled = false;
+    btn.textContent = '↑ Reintentar subir fotos';
+    btn.style.background = 'var(--danger)';
+    status.style.color = 'var(--danger)';
+    status.textContent = '✗ Error al subir — intentá de nuevo';
+  }
+}
+
+async function identificarLugar() {
+  const btn = document.getElementById('btn-identificar');
+  const status = document.getElementById('plano-status');
+  btn.disabled = true;
+  btn.textContent = 'Guardando ubicación...';
+  status.style.color = 'var(--accent2)';
+  status.textContent = 'Subiendo plano...';
+
+  try {
+    state.planoUrl = await subirFotoAPI(state.planoMarcado, 'plano_' + Date.now() + '.jpg');
+    btn.textContent = '✓ Lugar identificado';
+    btn.style.background = 'var(--accent)';
+    status.style.color = 'var(--accent)';
+    status.textContent = '✓ Ubicación guardada correctamente';
+    checkValidation();
+  } catch(e) {
+    btn.disabled = false;
+    btn.textContent = '📍 Reintentar identificar lugar';
+    btn.style.background = 'var(--danger)';
+    status.style.color = 'var(--danger)';
+    status.textContent = '✗ Error — intentá de nuevo';
+  }
 }
 
 async function subirFotoEnBackground(n, dataUrl) {
@@ -1654,6 +1734,19 @@ function setupPlanoEvents(canvas) {
     planoCtx.stroke();
     state.planoMarcadoOk = true;
     state.planoMarcado   = newCanvas.toDataURL('image/jpeg', 0.85);
+    state.planoUrl = null; // resetear URL al redibujar
+    // Mostrar botón identificar lugar
+    const btnWrapper = document.getElementById('btn-identificar-wrapper');
+    const btnId = document.getElementById('btn-identificar');
+    const statusId = document.getElementById('plano-status');
+    if (btnWrapper) {
+      btnWrapper.style.display = 'block';
+      btnId.textContent = '📍 Identificar lugar';
+      btnId.style.background = 'var(--accent2)';
+      btnId.disabled = false;
+      statusId.textContent = 'Punto marcado — tocá "Identificar lugar" para guardar';
+      statusId.style.color = 'var(--muted)';
+    }
     checkValidation();
   };
 
@@ -1664,9 +1757,9 @@ function setupPlanoEvents(canvas) {
 // ── Validación ──
 function checkValidation() {
   if (state.modoManual) { checkValidationManual(); return; }
-  const fotoOk  = !!(state.foto1DataUrl || state.foto1Marcada);
+  const fotoOk  = !!(state.foto1Url || state.foto2Url);
   const obsOk   = document.getElementById('nc-obs').value.trim().length > 3;
-  const planoOk = state.planoMarcadoOk;
+  const planoOk = !!(state.planoUrl);
 
   setVal('foto',  fotoOk);
   setVal('obs',   obsOk);
@@ -1686,26 +1779,13 @@ async function guardarNC() {
   const obs = document.getElementById('nc-obs').value.trim();
   const btn = document.getElementById('btn-guardar-nc');
   btn.disabled = true;
+  btn.textContent = 'Guardando...';
+  showToast('Guardando...', 'load', 0);
 
   try {
-    // Usar URLs ya subidas en background, o subir ahora si no están listas
-    let foto1Url = state.foto1Url || '';
-    let foto2Url = state.foto2Url || '';
-
-    if (state.foto1 && !foto1Url) {
-      btn.textContent = 'Subiendo foto 1...';
-      showToast('Subiendo foto 1...', 'load', 0);
-      foto1Url = await subirFotoAPI(state.foto1, 'foto1_' + Date.now() + '.jpg');
-    }
-    if (state.foto2 && !foto2Url) {
-      btn.textContent = 'Subiendo foto 2...';
-      showToast('Subiendo foto 2...', 'load', 0);
-      foto2Url = await subirFotoAPI(state.foto2, 'foto2_' + Date.now() + '.jpg');
-    }
-
-    btn.textContent = 'Subiendo plano...';
-    showToast('Subiendo plano...', 'load', 0);
-    const planoUrl = await subirFotoAPI(state.planoMarcado, 'plano_' + Date.now() + '.jpg');
+    const foto1Url = state.foto1Url || '';
+    const foto2Url = state.foto2Url || '';
+    const planoUrl = state.planoUrl || '';
 
     // Armar NCs existentes + nueva
     const ncsPrevias = [];
@@ -1721,8 +1801,6 @@ async function guardarNC() {
     }
     ncsPrevias.push({ obs, foto1: foto1Url, foto2: foto2Url, plano: planoUrl });
 
-    btn.textContent = 'Guardando...';
-    showToast('Guardando...', 'load', 0);
     const r = await api('guardarNC', {
       idRuta:    state.rutaActiva.idRuta,
       area:      p.Area,
@@ -1734,7 +1812,7 @@ async function guardarNC() {
       ncs:       ncsPrevias
     });
 
-    if (!r.ok) { showToast(r.error || 'Error al guardar', 'err'); btn.disabled=false; btn.textContent='Guardar no conformidad'; return; }
+    if (!r.ok) { showToast(r.error || 'Error al guardar', 'err'); btn.disabled=false; btn.textContent='Guardar NC'; return; }
 
     showToast('✓ No conformidad guardada', 'ok');
 
