@@ -785,14 +785,11 @@ async function openRuta(tipoRuta, idRuta) {
     state.avance    = avR.data?.puntos || [];
     state.ultimaPorSubsector = state.ultimaPorSubsectorGlobal?.[tipoRuta] || {};
 
-    // Reconstruir sectoresCerrados solo de la ruta activa
+    // Reconstruir sectoresCerrados desde Sheets
     state.sectoresCerrados = {};
     (avR.data?.sectorsCerrados || []).forEach(sc => {
-      // Solo incluir cierres de la ruta activa actual
-      if (sc.IDRuta === idRuta) {
-        const key = sc.Area + '|' + sc.Sector + '|' + sc.Subsector;
-        state.sectoresCerrados[key] = sc.FechaHora || 'cerrado';
-      }
+      const key = sc.Area + '|' + sc.Sector + '|' + sc.Subsector;
+      state.sectoresCerrados[key] = sc.FechaHora || 'cerrado';
     });
 
     renderRutaContent();
@@ -992,12 +989,24 @@ function renderSubsectores() {
   content.innerHTML = `<div class="area-group" style="margin:16px;">${html}</div>`;
 }
 
-function openSubsector(area, sector, subsector) {
+async function openSubsector(area, sector, subsector) {
   state.sectorActual = { area, sector, subsector };
   document.getElementById('puntos-title').textContent = subsector;
   document.getElementById('puntos-sub').textContent = sector + ' · ' + area;
   showScreen('screen-puntos');
   renderPuntos();
+
+  // Refrescar desde Sheets en background para tener estado actualizado
+  try {
+    const avR = await api('getAvance', { idRuta: state.rutaActiva.idRuta });
+    state.avance = avR.data?.puntos || [];
+    state.sectoresCerrados = {};
+    (avR.data?.sectorsCerrados || []).forEach(sc => {
+      const key = sc.Area + '|' + sc.Sector + '|' + sc.Subsector;
+      state.sectoresCerrados[key] = sc.FechaHora || 'cerrado';
+    });
+    renderPuntos();
+  } catch(e) { /* silencioso */ }
 }
 
 function renderPuntos() {
@@ -2192,6 +2201,12 @@ async function refrescarRuta() {
     const avR = await api('getAvance', { idRuta: state.rutaActiva.idRuta });
     hideToast();
     state.avance = avR.data?.puntos || [];
+    // Actualizar sectores cerrados
+    state.sectoresCerrados = {};
+    (avR.data?.sectorsCerrados || []).forEach(sc => {
+      const key = sc.Area + '|' + sc.Sector + '|' + sc.Subsector;
+      state.sectoresCerrados[key] = sc.FechaHora || 'cerrado';
+    });
     renderRutaContent();
     showToast('✓ Actualizado', 'ok');
   } catch(e) { showToast('Error al actualizar', 'err'); }
