@@ -1077,19 +1077,6 @@ function renderPuntos() {
     </div>
   `}).join('');
 
-  const btnNoListado = `
-    <div style="padding:10px 12px;border-top:1px dashed var(--border);">
-      <button onclick="abrirNCManual('${area}','${sector}','${subsector}')"
-        style="width:100%;background:transparent;border:1px dashed var(--warn);color:var(--warn);
-               border-radius:10px;padding:10px 14px;font-size:12px;font-weight:600;
-               font-family:'Syne',sans-serif;cursor:pointer;display:flex;align-items:center;
-               justify-content:center;gap:8px;">
-        ＋ Registrar hallazgo no listado
-        <span style="font-size:10px;font-weight:400;color:var(--muted);">para algo fuera de la lista</span>
-      </button>
-    </div>
-  `;
-
   const sectorCerrado = state.sectoresCerrados?.[area+'|'+sector+'|'+subsector];
   const btnNoListado = `
     <div style="padding:10px 12px;border-top:1px dashed var(--border);">
