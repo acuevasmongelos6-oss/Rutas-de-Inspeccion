@@ -1,635 +1,2539 @@
-// ============================================================
-// APPS SCRIPT — RUTAS DE INSPECCIÓN
-// ============================================================
-
-const SPREADSHEET_ID = '1ZIZhCbtjRe9pNcVH_ZrBne1-idZ76-ZQPkc5aVWrjOg';
-const FOLDER_FOTOS    = '13Jfe5Af3Xe2ZCDrPGHzwCMgmY7UnkIb1';
-const FOLDER_PDF      = '1K1bEwkAZuZXHe1kB4hFaUap7sicA49cz';
-const FOLDER_PLANOS   = '1JQsJAU19NhIHjhORxXW8Hvd5uC0KaV7k';
-
-// ============================================================
-// ENTRY POINT — maneja todos los requests GET/POST
-// ============================================================
-function doGet(e)  { return handleRequest(e); }
-function doPost(e) { return handleRequest(e); }
-
-function handleRequest(e) {
-  const params = e.parameter || {};
-  const body   = parseBody(e);
-  const accion = params.accion || body.accion || '';
-
-  let resultado;
-  try {
-    switch (accion) {
-      case 'setup':              resultado = setupSheets();                    break;
-      case 'getInspectores':     resultado = getInspectores();                 break;
-      case 'login':              resultado = login(body.legajo);               break;
-      case 'getRutas':           resultado = getRutas(body.legajo);            break;
-      case 'getPlantilla':       resultado = getPlantilla(body.ruta);          break;
-      case 'getAvance':          resultado = getAvance(body.idRuta);           break;
-      case 'iniciarRuta':        resultado = iniciarRuta(body);                break;
-      case 'marcarConforme':     resultado = marcarConforme(body);             break;
-      case 'subirFoto':          resultado = subirFoto(body);                  break;
-      case 'guardarNC':          resultado = guardarNC(body);                  break;
-      case 'editarObservacion':  resultado = editarObservacion(body);          break;
-      case 'cerrarRuta':         resultado = cerrarRuta(body.idRuta);          break;
-      case 'getReporte':         resultado = getReporte(body.idRuta);          break;
-      case 'getHistorialSubsector': resultado = getHistorialSubsector(body); break;
-      default:
-        resultado = { ok: false, error: 'Acción desconocida: ' + accion };
-    }
-  } catch (err) {
-    resultado = { ok: false, error: err.message };
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Inspecciones</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:       #0f1117;
+    --surface:  #181c27;
+    --surface2: #1e2333;
+    --border:   #2a3045;
+    --accent:   #00d4aa;
+    --accent2:  #0099ff;
+    --danger:   #ff4757;
+    --warn:     #ffa502;
+    --text:     #e8ecf4;
+    --muted:    #6b7899;
+    --radius:   14px;
   }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; background: var(--bg); color: var(--text); font-family: 'Syne', sans-serif; overflow-x: hidden; }
 
-  return ContentService
-    .createTextOutput(JSON.stringify(resultado))
-    .setMimeType(ContentService.MimeType.JSON);
+  /* ── TOAST ── */
+  #toast {
+    position: fixed; top: 16px; left: 50%; transform: translateX(-50%) translateY(-80px);
+    background: var(--surface2); border: 1px solid var(--border); border-radius: 50px;
+    padding: 12px 24px; font-size: 14px; font-weight: 600; z-index: 9999;
+    transition: transform .35s cubic-bezier(.34,1.56,.64,1); white-space: nowrap;
+    display: flex; align-items: center; gap: 8px; box-shadow: 0 8px 32px rgba(0,0,0,.5);
+  }
+  #toast.show { transform: translateX(-50%) translateY(0); }
+  #toast.ok   { border-color: var(--accent); color: var(--accent); }
+  #toast.err  { border-color: var(--danger); color: var(--danger); }
+  #toast.load { border-color: var(--accent2); color: var(--accent2); }
+
+  /* ── SPINNER ── */
+  .spin { width: 18px; height: 18px; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: spin .7s linear infinite; display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── SCREENS ── */
+  .screen { display: none; flex-direction: column; min-height: 100vh; animation: fadeIn .3s ease; }
+  .screen.active { display: flex; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+  /* ── HEADER ── */
+  .header {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 16px 20px; display: flex; align-items: center; gap: 12px;
+    position: sticky; top: 0; z-index: 100;
+  }
+  .header h1 { font-size: 17px; font-weight: 700; letter-spacing: .5px; }
+  .header .sub { font-size: 12px; color: var(--muted); font-family: 'DM Mono', monospace; }
+  .back-btn { background: var(--surface2); border: 1px solid var(--border); color: var(--text); width: 36px; height: 36px; border-radius: 10px; font-size: 18px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+
+  /* ── LOGIN ── */
+  #screen-login {
+    justify-content: center; align-items: center; padding: 32px 24px;
+    background: radial-gradient(ellipse at 50% 0%, #1a2540 0%, var(--bg) 60%);
+  }
+  .login-logo { font-size: 48px; margin-bottom: 8px; }
+  .login-title { font-size: 28px; font-weight: 800; letter-spacing: -1px; margin-bottom: 4px; }
+  .login-sub { color: var(--muted); font-size: 13px; margin-bottom: 40px; font-family: 'DM Mono', monospace; }
+  .login-box { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 28px; width: 100%; max-width: 360px; }
+  .login-box label { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: 1px; text-transform: uppercase; display: block; margin-bottom: 8px; }
+  .login-box input { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; color: var(--text); font-size: 20px; font-family: 'DM Mono', monospace; letter-spacing: 4px; text-align: center; outline: none; transition: border-color .2s; }
+  .login-box input:focus { border-color: var(--accent); }
+  .btn-primary { width: 100%; margin-top: 16px; background: var(--accent); color: #000; border: none; border-radius: 10px; padding: 15px; font-size: 15px; font-weight: 700; font-family: 'Syne', sans-serif; cursor: pointer; transition: opacity .2s, transform .1s; letter-spacing: .5px; }
+  .btn-primary:active { transform: scale(.97); opacity: .85; }
+  .btn-primary:disabled { opacity: .4; cursor: not-allowed; }
+
+  /* ── HOME ── */
+  #screen-home { padding-bottom: 32px; }
+  .home-header { padding: 28px 20px 20px; }
+  .home-header .greeting { font-size: 13px; color: var(--muted); font-family: 'DM Mono', monospace; margin-bottom: 4px; }
+  .home-header .name { font-size: 24px; font-weight: 800; letter-spacing: -.5px; }
+  .routes-grid { padding: 0 16px; display: flex; flex-direction: column; gap: 14px; }
+
+  .route-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    overflow: hidden; cursor: pointer; transition: border-color .2s, transform .1s;
+  }
+  .route-card:active { transform: scale(.98); }
+  .route-card.has-active { border-color: var(--accent2); }
+  .route-card-header { padding: 18px 18px 14px; display: flex; align-items: center; gap: 14px; }
+  .route-icon { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 24px; flex-shrink: 0; }
+  .route-icon.est { background: rgba(0,212,170,.12); }
+  .route-icon.meq { background: rgba(0,153,255,.12); }
+  .route-card-title { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+  .route-areas { display: flex; flex-direction: column; gap: 4px; padding: 0 18px 18px; border-top: 1px solid var(--border); padding-top: 12px; }
+  .area-row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
+  .area-name { color: var(--muted); }
+  .area-status { font-family: 'DM Mono', monospace; font-size: 11px; }
+  .area-status.ok { color: var(--accent); }
+  .area-status.active { color: var(--accent2); }
+  .area-status.none { color: var(--muted); }
+  .progress-bar { height: 3px; background: var(--border); border-radius: 2px; margin-top: 3px; overflow: hidden; }
+  .progress-fill { height: 100%; background: var(--accent2); border-radius: 2px; transition: width .5s ease; }
+
+  /* ── RUTA (sectores) ── */
+  #screen-ruta { padding-bottom: 40px; }
+  .ruta-content { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+
+  .area-group { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .area-toggle { padding: 16px 18px; display: flex; align-items: center; justify-content: space-between; cursor: pointer; user-select: none; }
+  .area-toggle-left { display: flex; align-items: center; gap: 10px; }
+  .area-badge { font-size: 11px; font-weight: 600; font-family: 'DM Mono', monospace; background: var(--surface2); border: 1px solid var(--border); padding: 3px 8px; border-radius: 20px; color: var(--muted); }
+  .area-toggle-title { font-size: 15px; font-weight: 700; }
+  .area-pct { font-size: 12px; font-family: 'DM Mono', monospace; color: var(--accent); }
+  .chevron { color: var(--muted); transition: transform .25s; font-size: 12px; }
+  .area-group.open .chevron { transform: rotate(180deg); }
+
+  .sector-list { border-top: 1px solid var(--border); }
+  .sector-item { padding: 13px 18px; border-bottom: 1px solid var(--border); cursor: pointer; display: flex; align-items: center; justify-content: space-between; transition: background .15s; }
+  .sector-item:last-child { border-bottom: none; }
+  .sector-item:active { background: var(--surface2); }
+  .sector-name { font-size: 14px; font-weight: 600; margin-bottom: 2px; }
+  .sector-sub { font-size: 11px; color: var(--muted); font-family: 'DM Mono', monospace; }
+  .sector-right { display: flex; align-items: center; gap: 8px; }
+  .pct-chip { font-size: 11px; font-family: 'DM Mono', monospace; background: var(--surface2); border: 1px solid var(--border); padding: 3px 8px; border-radius: 20px; }
+  .pct-chip.done { border-color: var(--accent); color: var(--accent); }
+  .pct-chip.partial { border-color: var(--accent2); color: var(--accent2); }
+
+  /* ── SUBSECTOR / PUNTOS ── */
+  #screen-puntos { padding-bottom: 40px; }
+  .puntos-content { padding: 16px; display: flex; flex-direction: column; gap: 8px; }
+
+  .subsector-group { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .subsector-header { padding: 13px 16px; background: var(--surface2); border-bottom: 1px solid var(--border); font-size: 13px; font-weight: 700; color: var(--muted); letter-spacing: .5px; text-transform: uppercase; }
+
+  .punto-item { padding: 14px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; cursor: pointer; transition: background .15s; }
+  .punto-item:last-child { border-bottom: none; }
+  .punto-item:active { background: var(--surface2); }
+  .punto-item.conforme { opacity: .6; }
+  .punto-nombre { font-size: 14px; font-weight: 600; margin-bottom: 2px; }
+  .punto-info { font-size: 11px; color: var(--muted); font-family: 'DM Mono', monospace; }
+  .estado-dot { width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; flex-shrink: 0; }
+  .estado-dot.pendiente { background: var(--surface2); border: 2px solid var(--border); color: var(--muted); }
+  .estado-dot.conforme  { background: rgba(0,212,170,.15); border: 2px solid var(--accent); color: var(--accent); }
+  .estado-dot.nc        { background: rgba(255,71,87,.15);  border: 2px solid var(--danger); color: var(--danger); }
+  .nc-count { font-size: 10px; font-family: 'DM Mono', monospace; font-weight: 700; }
+
+  /* ── PUNTO DETALLE ── */
+  #screen-punto { padding-bottom: 40px; }
+  .punto-content { padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+
+  .punto-info-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+  .punto-info-card .breadcrumb { font-size: 11px; color: var(--muted); font-family: 'DM Mono', monospace; margin-bottom: 6px; }
+  .punto-info-card .punto-title { font-size: 20px; font-weight: 800; letter-spacing: -.5px; }
+
+  .action-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .btn-conforme { background: rgba(0,212,170,.1); border: 2px solid var(--accent); color: var(--accent); border-radius: var(--radius); padding: 18px; font-size: 14px; font-weight: 700; font-family: 'Syne', sans-serif; cursor: pointer; transition: background .2s, transform .1s; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .btn-conforme:active { transform: scale(.97); background: rgba(0,212,170,.2); }
+  .btn-nc { background: rgba(255,71,87,.1); border: 2px solid var(--danger); color: var(--danger); border-radius: var(--radius); padding: 18px; font-size: 14px; font-weight: 700; font-family: 'Syne', sans-serif; cursor: pointer; transition: background .2s, transform .1s; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .btn-nc:active { transform: scale(.97); background: rgba(255,71,87,.2); }
+  .btn-icon { font-size: 24px; }
+
+  /* NCs existentes */
+  .nc-list { display: flex; flex-direction: column; gap: 10px; }
+  .nc-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }
+  .nc-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+  .nc-num { font-size: 11px; font-weight: 700; font-family: 'DM Mono', monospace; color: var(--danger); background: rgba(255,71,87,.1); border: 1px solid var(--danger); padding: 3px 8px; border-radius: 20px; }
+  .nc-edit-btn { background: var(--surface2); border: 1px solid var(--border); color: var(--muted); font-size: 12px; padding: 4px 10px; border-radius: 8px; cursor: pointer; font-family: 'Syne', sans-serif; }
+  .nc-fotos { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  .nc-foto-thumb { width: 80px; height: 80px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); }
+  .nc-obs { font-size: 13px; color: var(--text); line-height: 1.5; }
+  .nc-obs-muted { font-size: 12px; color: var(--muted); font-style: italic; }
+
+  /* ── FORMULARIO NC ── */
+  #screen-nc { padding-bottom: 40px; }
+  .nc-form { padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+
+  .form-section { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+  .form-section-title { padding: 12px 16px; background: var(--surface2); border-bottom: 1px solid var(--border); font-size: 12px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; justify-content: space-between; }
+  .required-badge { font-size: 10px; color: var(--danger); font-weight: 600; }
+  .form-section-body { padding: 16px; }
+
+  /* Fotos */
+  .fotos-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .foto-slot { aspect-ratio: 1; border-radius: 10px; border: 2px dashed var(--border); display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; position: relative; overflow: hidden; transition: border-color .2s; background: var(--bg); }
+  .foto-slot:active { border-color: var(--accent2); }
+  .foto-slot img { width: 100%; height: 100%; object-fit: cover; position: absolute; inset: 0; }
+  .foto-slot .foto-icon { font-size: 28px; margin-bottom: 4px; }
+  .foto-slot .foto-label { font-size: 11px; color: var(--muted); }
+  .foto-slot .foto-overlay { position: absolute; inset: 0; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; gap: 12px; opacity: 0; transition: opacity .2s; }
+  .foto-slot:hover .foto-overlay { opacity: 1; }
+  .foto-action-btn { background: rgba(255,255,255,.15); border: none; color: #fff; width: 36px; height: 36px; border-radius: 50%; font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  input[type=file] { display: none; }
+
+  /* Canvas marcado */
+  .canvas-container { position: relative; border-radius: 10px; overflow: hidden; background: var(--bg); touch-action: none; }
+  #canvas-foto { width: 100%; display: block; cursor: crosshair; }
+  .canvas-toolbar { display: flex; gap: 8px; margin-top: 8px; }
+  .canvas-btn { flex: 1; background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 10px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; font-family: 'Syne', sans-serif; display: flex; align-items: center; justify-content: center; gap: 6px; }
+  .canvas-btn.active { border-color: var(--danger); color: var(--danger); background: rgba(255,71,87,.1); }
+  .canvas-btn:active { opacity: .7; }
+
+  /* Plano */
+  .plano-container { position: relative; border-radius: 10px; overflow: hidden; background: var(--bg); border: 1px solid var(--border); touch-action: none; }
+  #canvas-plano { width: 100%; display: block; cursor: crosshair; }
+  .plano-hint { font-size: 12px; color: var(--muted); text-align: center; margin-top: 8px; font-family: 'DM Mono', monospace; }
+  .plano-placeholder { padding: 40px; text-align: center; color: var(--muted); }
+  .plano-placeholder .plano-icon { font-size: 40px; margin-bottom: 8px; }
+  .plano-placeholder p { font-size: 13px; line-height: 1.6; }
+
+  /* Observación */
+  .obs-textarea { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px; color: var(--text); font-size: 14px; font-family: 'Syne', sans-serif; resize: none; outline: none; transition: border-color .2s; min-height: 100px; }
+  .obs-textarea:focus { border-color: var(--accent2); }
+
+  /* Validación */
+  .validation-bar { display: flex; gap: 8px; padding: 12px 16px; background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); flex-wrap: wrap; }
+  .val-item { display: flex; align-items: center; gap: 5px; font-size: 12px; font-family: 'DM Mono', monospace; }
+  .val-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); transition: background .3s; }
+  .val-dot.ok { background: var(--accent); }
+  .val-label { color: var(--muted); }
+  .val-label.ok { color: var(--text); }
+
+  .btn-guardar-nc { background: var(--danger); color: #fff; border: none; border-radius: var(--radius); padding: 16px; font-size: 15px; font-weight: 700; font-family: 'Syne', sans-serif; cursor: pointer; transition: opacity .2s, transform .1s; width: 100%; }
+  .btn-guardar-nc:active { transform: scale(.97); }
+  .btn-guardar-nc:disabled { opacity: .3; cursor: not-allowed; }
+
+  /* Modal editar obs */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 500; display: flex; align-items: flex-end; justify-content: center; padding: 20px; animation: fadeIn .2s; }
+  .modal-box { background: var(--surface); border: 1px solid var(--border); border-radius: 18px 18px 14px 14px; width: 100%; max-width: 480px; padding: 20px; }
+  .modal-title { font-size: 16px; font-weight: 700; margin-bottom: 14px; }
+  .modal-actions { display: flex; gap: 10px; margin-top: 14px; }
+  .btn-cancel { flex: 1; background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 13px; border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer; font-family: 'Syne', sans-serif; }
+  .btn-save { flex: 2; background: var(--accent2); border: none; color: #fff; padding: 13px; border-radius: 10px; font-size: 14px; font-weight: 700; cursor: pointer; font-family: 'Syne', sans-serif; }
+
+  /* Cerrar sector */
+  .btn-cerrar-sector { width:100%; background:transparent; border:2px solid var(--accent); color:var(--accent); border-radius:var(--radius); padding:14px; font-size:14px; font-weight:700; font-family:'Syne',sans-serif; cursor:pointer; transition:background .2s; margin-top:4px; }
+  .btn-cerrar-sector:active { background:rgba(0,212,170,.1); }
+  .btn-cerrar-sector:disabled { opacity:.3; cursor:not-allowed; }
+  .sector-cerrado-badge { display:flex; align-items:center; gap:8px; padding:12px 16px; background:rgba(0,212,170,.06); border-top:1px solid rgba(0,212,170,.2); font-size:12px; color:var(--accent); font-family:'DM Mono',monospace; }
+
+  /* Cerrar ruta */
+  .cerrar-ruta-section { padding: 16px; }
+  .btn-cerrar-ruta { width: 100%; background: transparent; border: 2px solid var(--accent); color: var(--accent); border-radius: var(--radius); padding: 16px; font-size: 15px; font-weight: 700; font-family: 'Syne', sans-serif; cursor: pointer; transition: background .2s; }
+  .btn-cerrar-ruta:hover { background: rgba(0,212,170,.1); }
+
+  /* Estado vacío */
+  .empty-state { text-align: center; padding: 48px 24px; color: var(--muted); }
+  .empty-state .empty-icon { font-size: 48px; margin-bottom: 12px; }
+  .empty-state p { font-size: 14px; line-height: 1.6; }
+
+  /* Iniciar ruta */
+  .btn-iniciar { width: 100%; margin: 16px; width: calc(100% - 32px); background: var(--accent2); border: none; color: #fff; border-radius: var(--radius); padding: 16px; font-size: 15px; font-weight: 700; font-family: 'Syne', sans-serif; cursor: pointer; transition: opacity .2s; }
+
+  /* Tag conforme ya marcado */
+  .ya-conforme { background: rgba(0,212,170,.08); border: 1px solid rgba(0,212,170,.3); border-radius: var(--radius); padding: 14px 16px; display: flex; align-items: center; gap: 10px; color: var(--accent); font-size: 14px; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<div id="toast"></div>
+
+<!-- ══════════════════ LOGIN ══════════════════ -->
+<div id="screen-login" class="screen active">
+  <div class="login-logo">🏭</div>
+  <div class="login-title">Inspecciones</div>
+  <div class="login-sub">Sistema de rutas de inspección</div>
+  <div class="login-box">
+    <label>Legajo</label>
+    <input type="number" id="input-legajo" placeholder="0000" inputmode="numeric" maxlength="6">
+    <button class="btn-primary" id="btn-login" onclick="doLogin()">Ingresar</button>
+  </div>
+</div>
+
+<!-- ══════════════════ HOME ══════════════════ -->
+<div id="screen-home" class="screen">
+  <div class="home-header">
+    <div class="greeting">Bienvenido,</div>
+    <div class="name" id="home-name">—</div>
+  </div>
+  <div class="routes-grid" id="routes-grid">
+    <!-- cards generadas dinámicamente -->
+  </div>
+</div>
+
+<!-- ══════════════════ RUTA (sectores/subsectores) ══════════════════ -->
+<div id="screen-ruta" class="screen">
+  <div class="header">
+    <button class="back-btn" onclick="goHome()">←</button>
+    <div style="flex:1;">
+      <div class="header h1" id="ruta-title">Ruta</div>
+      <div class="sub" id="ruta-sub"></div>
+    </div>
+    <button class="back-btn" onclick="refrescarRuta()" title="Actualizar" style="font-size:16px;">↻</button>
+  </div>
+  <div id="ruta-no-activa" style="display:none; padding:16px;">
+    <button class="btn-iniciar" id="btn-iniciar-ruta" onclick="iniciarRuta()">▶ Iniciar nueva inspección</button>
+  </div>
+  <div class="ruta-content" id="ruta-content"></div>
+  <div class="cerrar-ruta-section" id="cerrar-ruta-section" style="display:none;">
+    <button class="btn-cerrar-ruta" onclick="cerrarRuta()">✓ Cerrar y finalizar ruta</button>
+  </div>
+</div>
+
+<!-- ══════════════════ SUBSECTORES ══════════════════ -->
+<div id="screen-subsectores" class="screen">
+  <div class="header">
+    <button class="back-btn" onclick="goRuta()">←</button>
+    <div>
+      <div class="header h1" id="subsectores-title">Sector</div>
+      <div class="sub" id="subsectores-sub"></div>
+    </div>
+  </div>
+  <div class="puntos-content" id="subsectores-content"></div>
+</div>
+
+<!-- ══════════════════ PUNTOS (lista de puntos del subsector) ══════════════════ -->
+<div id="screen-puntos" class="screen">
+  <div class="header">
+    <button class="back-btn" onclick="goSubsectores()">←</button>
+    <div style="flex:1;">
+      <div class="header h1" id="puntos-title">Subsector</div>
+      <div class="sub" id="puntos-sub"></div>
+    </div>
+    <button id="btn-guardar-cambios" onclick="guardarCambios()"
+      style="background:var(--surface2);border:1px solid var(--accent2);color:var(--accent2);
+             border-radius:10px;padding:8px 14px;font-size:12px;font-weight:700;
+             font-family:'Syne',sans-serif;cursor:pointer;white-space:nowrap;flex-shrink:0;">
+      💾 Guardar
+    </button>
+  </div>
+  <div class="puntos-content" id="puntos-content"></div>
+</div>
+
+<!-- ══════════════════ PUNTO DETALLE ══════════════════ -->
+<div id="screen-punto" class="screen">
+  <div class="header">
+    <button class="back-btn" onclick="goPuntos()">←</button>
+    <div>
+      <div class="header h1" id="punto-header-title">Punto</div>
+      <div class="sub" id="punto-header-sub"></div>
+    </div>
+  </div>
+  <div class="punto-content" id="punto-content"></div>
+</div>
+
+<!-- ══════════════════ FORMULARIO NC ══════════════════ -->
+<div id="screen-nc" class="screen">
+  <div class="header">
+    <button class="back-btn" onclick="goPunto()">←</button>
+    <div>
+      <div class="header h1" id="nc-header-title">No Conformidad</div>
+      <div class="sub" id="nc-header-sub"></div>
+    </div>
+  </div>
+  <div class="nc-form">
+
+    <!-- Aclaración modo manual -->
+    <div id="nc-manual-aclaracion" style="display:none;background:rgba(255,165,2,.08);border:1px solid var(--warn);border-radius:var(--radius);padding:14px;font-size:13px;color:var(--warn);line-height:1.6;">
+      ⚑ <strong>Hallazgo no listado</strong><br>
+      <span style="color:var(--muted);">Usá este formulario para registrar algo que no está en la lista de puntos de inspección. Foto, observación y plano son opcionales pero se recomienda incluir al menos uno.</span>
+    </div>
+
+    <!-- FOTOS -->
+    <div class="form-section">
+      <div class="form-section-title">
+        📷 Fotos <span class="required-badge">REQUERIDO (mín. 1)</span>
+      </div>
+      <div class="form-section-body">
+        <div class="fotos-grid">
+          <div class="foto-slot" id="slot-foto1" onclick="selectFoto(1)">
+            <div class="foto-icon">📷</div>
+            <div class="foto-label">Foto 1</div>
+            <div class="foto-overlay">
+              <button class="foto-action-btn" onclick="event.stopPropagation();marcarFoto(1)">✏️</button>
+              <button class="foto-action-btn" onclick="event.stopPropagation();quitarFoto(1)">🗑️</button>
+            </div>
+          </div>
+          <div class="foto-slot" id="slot-foto2" onclick="selectFoto(2)">
+            <div class="foto-icon">📷</div>
+            <div class="foto-label">Foto 2 (opcional)</div>
+            <div class="foto-overlay">
+              <button class="foto-action-btn" onclick="event.stopPropagation();marcarFoto(2)">✏️</button>
+              <button class="foto-action-btn" onclick="event.stopPropagation();quitarFoto(2)">🗑️</button>
+            </div>
+          </div>
+        </div>
+        <input type="file" id="file-foto1" accept="image/*" capture="environment" onchange="onFotoSelected(1)">
+        <input type="file" id="file-foto2" accept="image/*" capture="environment" onchange="onFotoSelected(2)">
+
+        <!-- Botón subir fotos -->
+        <div id="btn-subir-fotos-wrapper" style="display:none;margin-top:10px;">
+          <button id="btn-subir-fotos" onclick="subirFotosManual()"
+            style="width:100%;background:var(--accent2);border:none;color:#fff;border-radius:10px;
+                   padding:12px;font-size:14px;font-weight:700;font-family:'Syne',sans-serif;cursor:pointer;">
+            ↑ Subir foto(s)
+          </button>
+          <div id="fotos-status" style="font-size:11px;text-align:center;margin-top:6px;font-family:'DM Mono',monospace;color:var(--muted);"></div>
+        </div>
+
+        <!-- Canvas para marcar foto -->
+        <div id="canvas-foto-section" style="display:none; margin-top:14px;">
+          <div style="font-size:12px;color:var(--muted);margin-bottom:8px;font-family:'DM Mono',monospace;">
+            ✏️ Dibujá sobre la foto con el dedo
+          </div>
+          <div class="canvas-container">
+            <canvas id="canvas-foto"></canvas>
+          </div>
+          <div class="canvas-toolbar">
+            <button class="canvas-btn active" id="btn-draw" onclick="setTool('draw')">✏️ Dibujar</button>
+            <button class="canvas-btn" id="btn-undo" onclick="undoCanvas()">↩ Deshacer</button>
+            <button class="canvas-btn" id="btn-clear-canvas" onclick="clearCanvas()">🗑 Limpiar</button>
+            <button class="canvas-btn" style="border-color:var(--accent);color:var(--accent)" onclick="confirmCanvas()">✓ Listo</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- PLANO -->
+    <div class="form-section">
+      <div class="form-section-title">
+        📍 Ubicación en plano <span class="required-badge">REQUERIDO</span>
+      </div>
+      <div class="form-section-body">
+        <div id="plano-wrapper">
+          <div id="plano-sector-label" style="font-size:12px;font-family:'DM Mono',monospace;color:var(--accent2);margin-bottom:8px;"></div>
+          <div class="plano-placeholder" id="plano-placeholder">
+            <div class="plano-icon">🗺️</div>
+            <p>Cargando plano del sector...</p>
+          </div>
+          <div class="plano-container" id="plano-container" style="display:none;">
+            <canvas id="canvas-plano"></canvas>
+          </div>
+          <div class="plano-hint" id="plano-hint" style="display:none;">Tocá el plano para marcar la ubicación del hallazgo</div>
+          <!-- Botón identificar lugar -->
+          <div id="btn-identificar-wrapper" style="display:none;margin-top:10px;">
+            <button id="btn-identificar" onclick="identificarLugar()"
+              style="width:100%;background:var(--accent2);border:none;color:#fff;border-radius:10px;
+                     padding:12px;font-size:14px;font-weight:700;font-family:'Syne',sans-serif;cursor:pointer;">
+              📍 Identificar lugar
+            </button>
+            <div id="plano-status" style="font-size:11px;text-align:center;margin-top:6px;font-family:'DM Mono',monospace;color:var(--muted);"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- OBSERVACIÓN -->
+    <div class="form-section">
+      <div class="form-section-title">
+        📝 Observación <span class="required-badge">REQUERIDO</span>
+      </div>
+      <div class="form-section-body">
+        <textarea class="obs-textarea" id="nc-obs" placeholder="Describí el problema encontrado..." oninput="checkValidation()"></textarea>
+      </div>
+    </div>
+
+    <!-- VALIDACIÓN -->
+    <div class="validation-bar">
+      <div class="val-item">
+        <div class="val-dot" id="val-foto"></div>
+        <span class="val-label" id="val-foto-label">Foto</span>
+      </div>
+      <div class="val-item">
+        <div class="val-dot" id="val-obs"></div>
+        <span class="val-label" id="val-obs-label">Observación</span>
+      </div>
+      <div class="val-item">
+        <div class="val-dot" id="val-plano"></div>
+        <span class="val-label" id="val-plano-label">Plano marcado</span>
+      </div>
+    </div>
+
+    <button class="btn-guardar-nc" id="btn-guardar-nc" onclick="guardarNC()" disabled>
+      Guardar no conformidad
+    </button>
+
+    <!-- Panel post-guardado: decisión siguiente paso -->
+    <div id="panel-post-nc" style="display:none;">
+      <div style="background:var(--surface);border:1px solid var(--accent);border-radius:var(--radius);padding:18px;text-align:center;">
+        <div style="font-size:13px;color:var(--accent);font-family:'DM Mono',monospace;margin-bottom:14px;">✓ NC guardada correctamente</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+          <button onclick="nuevaNCEnPunto()" style="background:rgba(255,71,87,.1);border:2px solid var(--danger);color:var(--danger);border-radius:var(--radius);padding:14px;font-size:13px;font-weight:700;font-family:'Syne',sans-serif;cursor:pointer;">
+            ⚠ Nueva NC<br><span style="font-size:11px;font-weight:400;">en este punto</span>
+          </button>
+          <button onclick="siguientePuntoDesdeNC()" style="background:rgba(0,212,170,.1);border:2px solid var(--accent);color:var(--accent);border-radius:var(--radius);padding:14px;font-size:13px;font-weight:700;font-family:'Syne',sans-serif;cursor:pointer;">
+            → Siguiente<br><span style="font-size:11px;font-weight:400;">punto</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal ver NC -->
+<div id="modal-ver-nc" style="display:none;">
+  <div class="modal-overlay" onclick="if(event.target===this)cerrarVerNC()">
+    <div class="modal-box" style="max-height:85vh;overflow-y:auto;border-radius:18px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+        <div class="modal-title" id="ver-nc-title">NC #1</div>
+        <button onclick="cerrarVerNC()" style="background:var(--surface2);border:1px solid var(--border);color:var(--muted);width:32px;height:32px;border-radius:8px;font-size:16px;cursor:pointer;">✕</button>
+      </div>
+
+      <!-- Fotos -->
+      <div id="ver-nc-fotos" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;"></div>
+
+      <!-- Observación -->
+      <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;margin-bottom:6px;letter-spacing:.5px;">OBSERVACIÓN</div>
+      <div id="ver-nc-obs-texto" style="font-size:14px;color:var(--text);line-height:1.6;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;"></div>
+
+      <!-- Editar observación -->
+      <div id="ver-nc-edit-section" style="display:none;">
+        <textarea class="obs-textarea" id="ver-nc-obs-input" style="min-height:80px;margin-bottom:10px;"></textarea>
+        <div style="display:flex;gap:8px;">
+          <button class="btn-cancel" onclick="cancelarEditVerNC()">Cancelar</button>
+          <button class="btn-save" onclick="guardarEditVerNC()">Guardar</button>
+        </div>
+      </div>
+      <button id="ver-nc-btn-editar" onclick="activarEditVerNC()"
+        style="width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);
+               padding:11px;border-radius:10px;font-size:13px;font-weight:600;cursor:pointer;
+               font-family:'Syne',sans-serif;margin-bottom:4px;">
+        ✏️ Editar observación
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal editar observación -->
+<div id="modal-edit-obs" style="display:none;">
+  <div class="modal-overlay">
+    <div class="modal-box">
+      <div class="modal-title" id="modal-edit-title">Editar observación</div>
+      <textarea class="obs-textarea" id="modal-obs-input" style="min-height:80px;"></textarea>
+      <div class="modal-actions">
+        <button class="btn-cancel" onclick="closeEditModal()">Cancelar</button>
+        <button class="btn-save" onclick="saveEditObs()">Guardar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════
+// CONFIG
+// ══════════════════════════════════════════════════════
+const API = 'https://script.google.com/macros/s/AKfycbxO64zjkEuHpBLln5a7AobCZ2C6bz-N_UBXRfKBt8jjjCRfte2xZ0sb0mefr8d7gOAr/exec';
+const PLANOS_BASE = './planos/'; // carpeta de planos en GitHub Pages
+
+// ══════════════════════════════════════════════════════
+// ESTADO GLOBAL
+// ══════════════════════════════════════════════════════
+let state = {
+  inspector: null,
+  rutaActiva: null,      // { tipoRuta, idRuta }
+  tipoRutaSeleccionada: null,
+  plantilla: [],
+  avance: [],
+  sectorActual: null,    // { area, sector }
+  puntoActual: null,     // objeto punto completo
+  ncsEditando: [],       // NCs del punto actual
+  // NC form
+  foto1: null, foto1DataUrl: null,
+  foto2: null, foto2DataUrl: null,
+  foto1Marcada: null,    // dataUrl con marcas
+  foto2Marcada: null,
+  planoMarcado: null,    // dataUrl con marcas
+  planoMarcadoOk: false,
+  fotoMarcandoIdx: 0,
+  modoManual: false,
+  sectoresCerrados: {},  // key: area|sector|subsector → fecha/hora cierre
+  ultimaPorSubsector: {}, // key: area|sector|subsector → { fecha, inspector }
+  ultimaPorSubsectorGlobal: {},
+  // canvas
+  canvasHistory: [],
+  isDrawing: false,
+  lastX: 0, lastY: 0,
+  // modal edit
+  editingNCidx: -1,
+};
+
+// ══════════════════════════════════════════════════════
+// TOAST
+// ══════════════════════════════════════════════════════
+let toastTimer = null;
+function showToast(msg, tipo='ok', duracion=3000) {
+  const t = document.getElementById('toast');
+  t.className = 'show ' + tipo;
+  const icon = tipo==='ok' ? '✓' : tipo==='err' ? '✗' : '<span class="spin"></span>';
+  t.innerHTML = icon + ' ' + msg;
+  clearTimeout(toastTimer);
+  if (duracion > 0) toastTimer = setTimeout(() => t.className = '', duracion);
 }
+function hideToast() { document.getElementById('toast').className = ''; }
 
-// ============================================================
-// HELPERS
-// ============================================================
-function parseBody(e) {
-  try {
-    if (e.postData && e.postData.contents) {
-      return JSON.parse(e.postData.contents);
-    }
-  } catch (_) {}
-  return e.parameter || {};
-}
-
-function getSheet(nombre) {
-  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-  const sh = ss.getSheetByName(nombre);
-  if (!sh) throw new Error('Hoja no encontrada: ' + nombre);
-  return sh;
-}
-
-function sheetToObjects(sheet) {
-  const data = sheet.getDataRange().getValues();
-  if (data.length < 2) return [];
-  const headers = data[0].map(h => h.toString().trim());
-  return data.slice(1).map(row => {
-    const obj = {};
-    headers.forEach((h, i) => { obj[h] = row[i]; });
-    return obj;
+// ══════════════════════════════════════════════════════
+// API CALL
+// ══════════════════════════════════════════════════════
+async function api(accion, body={}) {
+  const res = await fetch(API, {
+    method: 'POST',
+    body: JSON.stringify({ accion, ...body })
   });
+  return res.json();
 }
 
-function normFecha(val) {
-  if (!val) return '';
-  if (val instanceof Date) {
-    const y = val.getFullYear();
-    const m = String(val.getMonth() + 1).padStart(2, '0');
-    const d = String(val.getDate()).padStart(2, '0');
-    return y + '-' + m + '-' + d;
-  }
-  return val.toString().trim();
+// ══════════════════════════════════════════════════════
+// NAVEGACIÓN
+// ══════════════════════════════════════════════════════
+// Orden de pantallas para navegación con botón atrás
+const SCREEN_BACK = {
+  'screen-home':         null,
+  'screen-ruta':         () => goHome(),
+  'screen-subsectores':  () => goRuta(),
+  'screen-puntos':       () => goSubsectores(),
+  'screen-punto':        () => goPuntos(),
+  'screen-nc':           () => goPunto(),
+};
+
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  window.scrollTo(0,0);
+  // Pushear estado al historial para interceptar botón atrás del celular
+  history.pushState({ screen: id }, '', '');
 }
 
-function timestamp() {
-  const now = new Date();
-  // Paraguay UTC-4
-  const py = new Date(now.getTime() - (4 * 60 * 60 * 1000));
-  return Utilities.formatDate(py, 'UTC', 'yyyy-MM-dd HH:mm:ss');
-}
+// Interceptar botón atrás del celular
+window.addEventListener('popstate', function(e) {
+  const screenActual = document.querySelector('.screen.active')?.id;
+  if (!screenActual || screenActual === 'screen-login') return;
 
-function generarId(prefijo) {
-  return prefijo + '-' + new Date().getTime();
-}
-
-// ============================================================
-// SETUP — crea hojas y encabezados si no existen
-// ============================================================
-function setupSheets() {
-  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
-
-  const hojas = {
-    'Inspectores': ['Legajo', 'Nombre', 'Activo'],
-    'Plantillas':  ['Ruta', 'Area', 'Sector', 'Subsector', 'Punto', 'Orden', 'CodigoPlano'],
-    'Rutas':       ['IDRuta', 'TipoRuta', 'Legajo', 'FechaInicio', 'FechaFin', 'Estado'],
-    'Inspecciones':['IDInspeccion', 'IDRuta', 'TipoRuta', 'Area', 'Sector', 'Subsector',
-                    'Punto', 'Orden', 'Legajo', 'FechaHora', 'Estado',
-                    'NC1_Obs', 'NC1_Foto1', 'NC1_Foto2', 'NC1_Plano',
-                    'NC2_Obs', 'NC2_Foto1', 'NC2_Foto2', 'NC2_Plano',
-                    'NC3_Obs', 'NC3_Foto1', 'NC3_Foto2', 'NC3_Plano',
-                    'NC4_Obs', 'NC4_Foto1', 'NC4_Foto2', 'NC4_Plano',
-                    'NC5_Obs', 'NC5_Foto1', 'NC5_Foto2', 'NC5_Plano',
-                    'CantNC']
-  };
-
-  Object.entries(hojas).forEach(([nombre, cols]) => {
-    let sh = ss.getSheetByName(nombre);
-    if (!sh) {
-      sh = ss.insertSheet(nombre);
-      sh.getRange(1, 1, 1, cols.length).setValues([cols]);
-      sh.getRange(1, 1, 1, cols.length)
-        .setBackground('#1a1a2e')
-        .setFontColor('#ffffff')
-        .setFontWeight('bold');
-      sh.setFrozenRows(1);
+  // Si está en home, confirmar salida
+  if (screenActual === 'screen-home') {
+    if (confirm('¿Salir de la aplicación?')) {
+      history.back();
+    } else {
+      history.pushState({ screen: screenActual }, '', '');
     }
-  });
-
-  // Datos de prueba — Inspectores
-  const shInsp = ss.getSheetByName('Inspectores');
-  if (shInsp.getLastRow() < 2) {
-    shInsp.getRange(2, 1, 2, 3).setValues([
-      ['1001', 'Juan Pérez', 'SI'],
-      ['1002', 'María González', 'SI']
-    ]);
+    return;
   }
 
-  // Datos de prueba — Plantillas (Ruta Estructural, Área Fría, Depósitos)
-  const shPlant = ss.getSheetByName('Plantillas');
-  if (shPlant.getLastRow() < 2) {
-    const muestra = [
-      ['EST', 'Área Fría', 'Depósitos', 'Depósito de enfriado',  'Puertas',  1, 'deposito-enfriado'],
-      ['EST', 'Área Fría', 'Depósitos', 'Depósito de enfriado',  'Racks',    2, 'deposito-enfriado'],
-      ['EST', 'Área Fría', 'Depósitos', 'Depósito de enfriado',  'Zócalos',  3, 'deposito-enfriado'],
-      ['EST', 'Área Fría', 'Depósitos', 'Depósito de enfriado',  'Piso',     4, 'deposito-enfriado'],
-      ['EST', 'Área Fría', 'Depósitos', 'Depósito de enfriado',  'Paredes',  5, 'deposito-enfriado'],
-      ['EST', 'Área Fría', 'Depósitos', 'Depósito de enfriado',  'Techo',    6, 'deposito-enfriado'],
-      ['EST', 'Área Fría', 'Depósitos', 'Depósito de congelado', 'Puertas',  1, 'deposito-congelado'],
-      ['EST', 'Área Fría', 'Depósitos', 'Depósito de congelado', 'Racks',    2, 'deposito-congelado'],
-      ['EST', 'Área Fría', 'Depósitos', 'Depósito de congelado', 'Zócalos',  3, 'deposito-congelado'],
-      ['EST', 'Área Fría', 'Depósitos', 'Depósito de congelado', 'Piso',     4, 'deposito-congelado'],
-      ['EST', 'Área Fría', 'Depósitos', 'Depósito de congelado', 'Paredes',  5, 'deposito-congelado'],
-      ['EST', 'Área Fría', 'Depósitos', 'Depósito de congelado', 'Techo',    6, 'deposito-congelado'],
-    ];
-    shPlant.getRange(2, 1, muestra.length, 7).setValues(muestra);
+  // Si está en formulario NC con datos cargados, confirmar
+  if (screenActual === 'screen-nc') {
+    const tieneDatos = state.foto1DataUrl || state.foto2DataUrl || document.getElementById('nc-obs')?.value.trim();
+    if (tieneDatos) {
+      if (!confirm('¿Salir del formulario? Los datos no guardados se perderán.')) {
+        history.pushState({ screen: screenActual }, '', '');
+        return;
+      }
+    }
   }
 
-  return { ok: true, mensaje: 'Hojas creadas correctamente' };
-}
+  // Navegar a la pantalla anterior
+  const backFn = SCREEN_BACK[screenActual];
+  if (backFn) backFn();
+  else goHome();
+});
 
-// ============================================================
+function goHome()        { showScreen('screen-home'); }
+function goRuta()        { showScreen('screen-ruta'); }
+function goSubsectores() { showScreen('screen-subsectores'); renderSubsectores(); }
+function goPuntos()      { showScreen('screen-puntos'); renderPuntos(); }
+function goPunto()       { showScreen('screen-puntos'); renderPuntos(); }
+
+// ══════════════════════════════════════════════════════
 // LOGIN
-// ============================================================
-function getInspectores() {
-  const rows = sheetToObjects(getSheet('Inspectores'));
-  return { ok: true, data: rows.filter(r => r.Activo === 'SI') };
-}
+// ══════════════════════════════════════════════════════
+document.getElementById('input-legajo').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doLogin();
+});
 
-function login(legajo) {
-  if (!legajo) return { ok: false, error: 'Legajo requerido' };
-  const rows = sheetToObjects(getSheet('Inspectores'));
-  const inspector = rows.find(r => r.Legajo.toString() === legajo.toString() && r.Activo === 'SI');
-  if (!inspector) return { ok: false, error: 'Legajo no encontrado' };
-  return { ok: true, data: inspector };
-}
-
-// ============================================================
-// RUTAS — modelo global (cualquier inspector ve todas las rutas)
-// ============================================================
-function getRutas(legajo) {
-  const rutas = sheetToObjects(getSheet('Rutas'));
-  const insp  = sheetToObjects(getSheet('Inspecciones'));
-  const inspectores = sheetToObjects(getSheet('Inspectores'));
-
-  const tipos = ['EST', 'MEQ'];
-  const resultado = {};
-
-  tipos.forEach(tipo => {
-    const rutasTipo   = rutas.filter(r => r.TipoRuta === tipo);
-    const enCurso     = rutasTipo.find(r => r.Estado === 'en_curso');
-    const completadas = rutasTipo
-      .filter(r => r.Estado === 'completada')
-      .sort((a, b) => new Date(b.FechaFin) - new Date(a.FechaFin));
-
-    // Avance por área si hay ruta en curso
-    let avancePorArea = {};
-    let inspectorEnCurso = null;
-    if (enCurso) {
-      const plantilla = getPlantillaRaw(tipo);
-      const inspRuta  = insp.filter(i => i.IDRuta === enCurso.IDRuta);
-      const areas = [...new Set(plantilla.map(p => p.Area))];
-      areas.forEach(area => {
-        const puntosArea  = plantilla.filter(p => p.Area === area).length;
-        const tocadosArea = inspRuta.filter(i => i.Area === area && i.Punto !== '✓ SECTOR CERRADO').length;
-        avancePorArea[area] = {
-          total:   puntosArea,
-          tocados: tocadosArea,
-          pct:     puntosArea > 0 ? Math.round((tocadosArea / puntosArea) * 100) : 0
-        };
-      });
-      const inspObj = inspectores.find(i => i.Legajo.toString() === (enCurso.LegajoInicio || '').toString());
-      inspectorEnCurso = inspObj ? inspObj.Nombre : enCurso.LegajoInicio || 'Inspector';
-    }
-
-    // Última fecha por área
-    const ultimaPorArea = {};
-    if (completadas.length > 0) {
-      const areas = [...new Set(sheetToObjects(getSheet('Plantillas'))
-        .filter(p => p.Ruta === tipo).map(p => p.Area))];
-      areas.forEach(area => {
-        const ultima = completadas.find(r => insp.some(i => i.IDRuta === r.IDRuta && i.Area === area));
-        if (ultima) ultimaPorArea[area] = normFecha(ultima.FechaFin);
-      });
-    }
-
-    // Última inspección por subsector (fecha + inspector)
-    const ultimaPorSubsector = {};
-    completadas.forEach(ruta => {
-      insp.filter(i => i.IDRuta === ruta.IDRuta && i.Punto !== '✓ SECTOR CERRADO').forEach(i => {
-        const key = i.Area + '|' + i.Sector + '|' + i.Subsector;
-        if (!ultimaPorSubsector[key]) {
-          const inspObj = inspectores.find(x => x.Legajo.toString() === (i.Legajo || '').toString());
-          ultimaPorSubsector[key] = {
-            fecha:     normFecha(ruta.FechaFin),
-            inspector: inspObj ? inspObj.Nombre : i.Legajo || '',
-            idRuta:    ruta.IDRuta
-          };
-        }
-      });
-    });
-
-    resultado[tipo] = { enCurso: enCurso ? enCurso.IDRuta : null, inspectorEnCurso, avancePorArea, ultimaPorArea, ultimaPorSubsector };
-  });
-
-  return { ok: true, data: resultado };
-}
-
-function getPlantillaRaw(tipoRuta) {
-  return sheetToObjects(getSheet('Plantillas'))
-    .filter(p => p.Ruta === tipoRuta)
-    .sort((a, b) => Number(a.Orden) - Number(b.Orden));
-}
-
-function getPlantilla(tipoRuta) {
-  if (!tipoRuta) return { ok: false, error: 'Tipo de ruta requerido' };
-  const data = getPlantillaRaw(tipoRuta);
-  return { ok: true, data };
-}
-
-// ============================================================
-// INICIAR RUTA — global, no por legajo
-// ============================================================
-function iniciarRuta(body) {
-  const { legajo, tipoRuta } = body;
-  if (!tipoRuta) return { ok: false, error: 'Tipo de ruta requerido' };
-
-  // Verificar que no haya ruta en curso para este tipo
-  const rutas = sheetToObjects(getSheet('Rutas'));
-  const enCurso = rutas.find(r => r.TipoRuta === tipoRuta && r.Estado === 'en_curso');
-  if (enCurso) {
-    const inspectores = sheetToObjects(getSheet('Inspectores'));
-    const inspObj = inspectores.find(i => i.Legajo.toString() === (enCurso.LegajoInicio || '').toString());
-    const nombre = inspObj ? inspObj.Nombre : 'otro inspector';
-    return { ok: false, error: nombre + ' ya inició esta ruta', idRuta: enCurso.IDRuta };
+async function doLogin() {
+  const legajo = document.getElementById('input-legajo').value.trim();
+  if (!legajo) return;
+  const btn = document.getElementById('btn-login');
+  btn.disabled = true;
+  btn.textContent = '...';
+  showToast('Verificando legajo...', 'load', 0);
+  try {
+    const r = await api('login', { legajo });
+    if (!r.ok) { showToast('Legajo no encontrado', 'err'); btn.disabled=false; btn.textContent='Ingresar'; return; }
+    state.inspector = r.data;
+    hideToast();
+    await loadHome();
+  } catch(e) {
+    showToast('Error de conexión', 'err');
+    btn.disabled=false; btn.textContent='Ingresar';
   }
-
-  const idRuta = generarId(tipoRuta);
-  const sh = getSheet('Rutas');
-  // LegajoInicio guarda quién inició la ruta
-  sh.appendRow([idRuta, tipoRuta, legajo, timestamp(), '', 'en_curso']);
-
-  return { ok: true, data: { idRuta } };
 }
 
-// ============================================================
-// AVANCE DE RUTA
-// ============================================================
-function getAvance(idRuta) {
-  if (!idRuta) return { ok: false, error: 'IDRuta requerido' };
+// ══════════════════════════════════════════════════════
+// HOME
+// ══════════════════════════════════════════════════════
+async function loadHome() {
+  document.getElementById('home-name').textContent = state.inspector.Nombre;
+  showScreen('screen-home');
+  showToast('Cargando rutas...', 'load', 0);
+  try {
+    const r = await api('getRutas', { legajo: state.inspector.Legajo });
+    hideToast();
+    if (!r.ok) { showToast('Error al cargar rutas', 'err'); return; }
+    renderHomeCards(r.data);
+  } catch(e) { showToast('Error de conexión', 'err'); }
+}
 
-  const rutas = sheetToObjects(getSheet('Rutas'));
-  const ruta  = rutas.find(r => r.IDRuta === idRuta);
-  if (!ruta) return { ok: false, error: 'Ruta no encontrada' };
-
-  const plantilla = getPlantillaRaw(ruta.TipoRuta);
-  const insp = sheetToObjects(getSheet('Inspecciones'))
-    .filter(i => i.IDRuta === idRuta);
-
-  // Crear mapa de puntos inspeccionados
-  const inspeccionados = {};
-  insp.forEach(i => {
-    const key = [i.Area, i.Sector, i.Subsector, i.Punto].join('|');
-    inspeccionados[key] = i;
-  });
-
-  // Agregar estado a cada punto de la plantilla
-  const puntos = plantilla.map(p => {
-    const key = [p.Area, p.Sector, p.Subsector, p.Punto].join('|');
-    const reg = inspeccionados[key];
-    if (!reg) return { ...p, estado: 'pendiente', cantNC: 0, fechaHora: '' };
-
-    // Incluir todas las columnas de NCs
-    const ncData = {};
-    for (let i = 1; i <= 5; i++) {
-      ncData['NC'+i+'_Obs']   = reg['NC'+i+'_Obs']   || '';
-      ncData['NC'+i+'_Foto1'] = reg['NC'+i+'_Foto1'] || '';
-      ncData['NC'+i+'_Foto2'] = reg['NC'+i+'_Foto2'] || '';
-      ncData['NC'+i+'_Plano'] = reg['NC'+i+'_Plano'] || '';
+function renderHomeCards(data) {
+  const grid = document.getElementById('routes-grid');
+  // Guardar ultimaPorSubsector globalmente
+  state.ultimaPorSubsectorGlobal = {};
+  ['EST','MEQ'].forEach(tipo => {
+    if (data[tipo]?.ultimaPorSubsector) {
+      state.ultimaPorSubsectorGlobal[tipo] = data[tipo].ultimaPorSubsector;
     }
-
-    return {
-      ...p,
-      estado:    reg.Estado    || 'pendiente',
-      cantNC:    Number(reg.CantNC) || 0,
-      fechaHora: reg.FechaHora || '',
-      legajo:    reg.Legajo    || '',
-      ...ncData
-    };
   });
 
-  const total   = puntos.length;
-  const tocados = puntos.filter(p => p.estado !== 'pendiente').length;
-  const pct     = total > 0 ? Math.round((tocados / total) * 100) : 0;
-
-  // Agregar filas de SECTOR CERRADO al array de puntos
-  const sectoresCerradosRows = insp
-    .filter(i => i.Punto === '✓ SECTOR CERRADO')
-    .map(i => ({
-      Area: i.Area, Sector: i.Sector, Subsector: i.Subsector,
-      Punto: '✓ SECTOR CERRADO', Orden: 9999,
-      estado: 'conforme', cantNC: 0,
-      fechaHora: i.FechaHora || ''
-    }));
-
-  const todosLosPuntos = [...puntos, ...sectoresCerradosRows];
-
-  // Sectores cerrados — filas con punto especial
-  const sectorsCerrados = insp
-    .filter(i => i.Punto === '✓ SECTOR CERRADO')
-    .map(i => ({
-      IDRuta:    i.IDRuta,
-      Area:      i.Area,
-      Sector:    i.Sector,
-      Subsector: i.Subsector,
-      FechaHora: normFecha(i.FechaHora) || i.FechaHora || 'cerrado'
-    }));
-
-  return { ok: true, data: { puntos: todosLosPuntos, total, tocados, pct, sectorsCerrados } };
-}
-
-// ============================================================
-// MARCAR CONFORME
-// ============================================================
-function marcarConforme(body) {
-  const { idRuta, area, sector, subsector, punto, orden, legajo } = body;
-  if (!idRuta || !area || !sector || !subsector || !punto) {
-    return { ok: false, error: 'Datos incompletos' };
-  }
-
-  // Verificar si ya existe
-  const sh   = getSheet('Inspecciones');
-  const rows = sheetToObjects(sh);
-  const idx  = rows.findIndex(r =>
-    r.IDRuta === idRuta && r.Area === area &&
-    r.Sector === sector && r.Subsector === subsector && r.Punto === punto
-  );
-
-  const idInsp = generarId('INS');
-  const fila = [
-    idInsp, idRuta, '', area, sector, subsector, punto, orden,
-    legajo, timestamp(), 'conforme',
-    '', '', '', '',
-    '', '', '', '',
-    '', '', '', '',
-    '', '', '', '',
-    '', '', '', '',
-    0
+  const rutas = [
+    { tipo: 'EST', label: 'Ruta Estructural',          icon: '🏗️', cls: 'est' },
+    { tipo: 'MEQ', label: 'Ruta Máquinas y Equipos',   icon: '⚙️', cls: 'meq' },
   ];
 
-  if (idx >= 0) {
-    // Ya existe — actualizar
-    sh.getRange(idx + 2, 1, 1, fila.length).setValues([fila]);
-  } else {
-    sh.appendRow(fila);
-  }
+  grid.innerHTML = rutas.map(r => {
+    const info = data[r.tipo] || {};
+    const enCurso = info.enCurso;
+    const areas = ['Área Fría', 'Área Caliente', 'Exteriores'];
 
-  return { ok: true, mensaje: 'Punto marcado como conforme' };
+    const areasHtml = areas.map(area => {
+      if (enCurso && info.avancePorArea && info.avancePorArea[area]) {
+        const av = info.avancePorArea[area];
+        return `
+          <div class="area-row">
+            <span class="area-name">${area}</span>
+            <span class="area-status active">${av.pct}% (${av.tocados}/${av.total})</span>
+          </div>
+          <div class="progress-bar"><div class="progress-fill" style="width:${av.pct}%"></div></div>
+        `;
+      }
+      const ultima = info.ultimaPorArea && info.ultimaPorArea[area];
+      return `
+        <div class="area-row">
+          <span class="area-name">${area}</span>
+          <span class="area-status ${ultima ? 'ok' : 'none'}">${ultima ? ultima : 'Sin inspecciones'}</span>
+        </div>
+      `;
+    }).join('');
+
+    return `
+      <div class="route-card ${enCurso ? 'has-active' : ''}" onclick="openRuta('${r.tipo}', '${enCurso || ''}')">
+        <div class="route-card-header">
+          <div class="route-icon ${r.cls}">${r.icon}</div>
+          <div>
+            <div class="route-card-title">${r.label}</div>
+            <div style="font-size:12px;color:var(--muted);font-family:'DM Mono',monospace;">${enCurso ? '● EN CURSO' : 'Sin ruta activa'}</div>
+          </div>
+        </div>
+        <div class="route-areas">${areasHtml}</div>
+      </div>
+    `;
+  }).join('');
 }
 
-// ============================================================
-// SUBIR FOTO A DRIVE
-// ============================================================
-function subirFoto(body) {
-  const { base64, nombre, mimeType } = body;
-  if (!base64 || !nombre) return { ok: false, error: 'Datos incompletos' };
+// ══════════════════════════════════════════════════════
+// ABRIR RUTA
+// ══════════════════════════════════════════════════════
+async function openRuta(tipoRuta, idRuta) {
+  state.tipoRutaSeleccionada = tipoRuta;
+  state.rutaActiva = idRuta ? { tipoRuta, idRuta } : null;
 
-  const carpeta  = DriveApp.getFolderById(FOLDER_FOTOS);
-  const decoded  = Utilities.base64Decode(base64);
-  const blob     = Utilities.newBlob(decoded, mimeType || 'image/jpeg', nombre);
-  const archivo  = carpeta.createFile(blob);
+  const titles = { EST: 'Ruta Estructural', MEQ: 'Ruta Máquinas y Equipos' };
+  document.getElementById('ruta-title').textContent = titles[tipoRuta] || tipoRuta;
+  document.getElementById('ruta-sub').textContent = state.inspector.Nombre;
+  showScreen('screen-ruta');
 
-  // Hacer público el archivo
-  archivo.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-
-  const id       = archivo.getId();
-  const url      = 'https://drive.google.com/uc?export=view&id=' + id;
-  const thumbUrl = 'https://drive.google.com/thumbnail?id=' + id + '&sz=w800';
-  return { ok: true, data: { url, thumbUrl, id } };
-}
-
-// ============================================================
-// GUARDAR NO CONFORMIDAD
-// ============================================================
-function guardarNC(body) {
-  const { idRuta, area, sector, subsector, punto, orden, legajo, ncs } = body;
-  if (!idRuta || !area || !sector || !subsector || !punto || !ncs) {
-    return { ok: false, error: 'Datos incompletos' };
+  if (!idRuta) {
+    document.getElementById('ruta-no-activa').style.display = 'block';
+    document.getElementById('ruta-content').innerHTML = '';
+    document.getElementById('cerrar-ruta-section').style.display = 'none';
+    return;
   }
 
-  const sh   = getSheet('Inspecciones');
-  const rows = sheetToObjects(sh);
-  const idx  = rows.findIndex(r =>
-    r.IDRuta === idRuta && r.Area === area &&
-    r.Sector === sector && r.Subsector === subsector && r.Punto === punto
-  );
+  document.getElementById('ruta-no-activa').style.display = 'none';
+  showToast('Cargando ruta...', 'load', 0);
+  try {
+    const [plantR, avR] = await Promise.all([
+      api('getPlantilla', { ruta: tipoRuta }),
+      api('getAvance', { idRuta })
+    ]);
+    hideToast();
+    state.plantilla = plantR.data || [];
+    state.avance    = avR.data?.puntos || [];
+    state.ultimaPorSubsector = state.ultimaPorSubsectorGlobal?.[tipoRuta] || {};
 
-  // Armar fila con hasta 5 NCs
-  const idInsp = generarId('INS');
-  const fila = [idInsp, idRuta, '', area, sector, subsector, punto, orden, legajo, timestamp(), 'nc'];
+    // Reconstruir sectoresCerrados desde Sheets
+    state.sectoresCerrados = {};
+    (avR.data?.sectorsCerrados || []).forEach(sc => {
+      const key = sc.Area + '|' + sc.Sector + '|' + sc.Subsector;
+      state.sectoresCerrados[key] = sc.FechaHora || 'cerrado';
+    });
 
-  // NC1 a NC5
-  for (let i = 0; i < 5; i++) {
-    const nc = ncs[i] || {};
-    fila.push(nc.obs   || '');
-    fila.push(nc.foto1 || '');
-    fila.push(nc.foto2 || '');
-    fila.push(nc.plano || '');
-  }
-  fila.push(ncs.length);
-
-  if (idx >= 0) {
-    sh.getRange(idx + 2, 1, 1, fila.length).setValues([fila]);
-  } else {
-    sh.appendRow(fila);
-  }
-
-  return { ok: true, mensaje: 'No conformidad guardada correctamente' };
+    renderRutaContent();
+  } catch(e) { showToast('Error al cargar ruta', 'err'); }
 }
 
-// ============================================================
-// EDITAR OBSERVACIÓN (solo texto, no fotos)
-// ============================================================
-function editarObservacion(body) {
-  const { idRuta, area, sector, subsector, punto, nroNC, nuevaObs } = body;
-  if (!idRuta || !area || !sector || !subsector || !punto) {
-    return { ok: false, error: 'Datos incompletos' };
+function renderRutaContent() {
+  const content = document.getElementById('ruta-content');
+  if (!state.plantilla.length) {
+    content.innerHTML = `<div class="empty-state"><div class="empty-icon">📋</div><p>No hay puntos cargados en la plantilla.</p></div>`;
+    return;
   }
 
-  const sh      = getSheet('Inspecciones');
-  const headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
-  const rows    = sheetToObjects(sh);
-  const idx     = rows.findIndex(r =>
-    r.IDRuta === idRuta && r.Area === area &&
-    r.Sector === sector && r.Subsector === subsector && r.Punto === punto
-  );
-
-  if (idx < 0) return { ok: false, error: 'Registro no encontrado' };
-
-  const colKey  = 'NC' + nroNC + '_Obs';
-  const colIdx  = headers.indexOf(colKey);
-  if (colIdx < 0) return { ok: false, error: 'Columna no encontrada: ' + colKey };
-
-  sh.getRange(idx + 2, colIdx + 1).setValue(nuevaObs);
-  return { ok: true, mensaje: 'Observación actualizada' };
-}
-
-// ============================================================
-// CERRAR RUTA
-// ============================================================
-function cerrarRuta(idRuta) {
-  if (!idRuta) return { ok: false, error: 'IDRuta requerido' };
-
-  const sh   = getSheet('Rutas');
-  const rows = sheetToObjects(sh);
-  const idx  = rows.findIndex(r => r.IDRuta === idRuta);
-  if (idx < 0) return { ok: false, error: 'Ruta no encontrada' };
-
-  // Columnas: IDRuta(1) TipoRuta(2) Legajo(3) FechaInicio(4) FechaFin(5) Estado(6)
-  sh.getRange(idx + 2, 5).setValue(timestamp());
-  sh.getRange(idx + 2, 6).setValue('completada');
-
-  return { ok: true, mensaje: 'Ruta cerrada correctamente' };
-}
-
-// ============================================================
-// REPORTE — devuelve todos los datos para generar PDF/Excel
-// ============================================================
-function getReporte(idRuta) {
-  if (!idRuta) return { ok: false, error: 'IDRuta requerido' };
-
-  const rutas = sheetToObjects(getSheet('Rutas'));
-  const ruta  = rutas.find(r => r.IDRuta === idRuta);
-  if (!ruta) return { ok: false, error: 'Ruta no encontrada' };
-
-  const inspectores = sheetToObjects(getSheet('Inspectores'));
-  const inspector   = inspectores.find(i => i.Legajo.toString() === ruta.Legajo.toString());
-
-  const plantilla   = getPlantillaRaw(ruta.TipoRuta);
-  const insp        = sheetToObjects(getSheet('Inspecciones')).filter(i => i.IDRuta === idRuta);
-
-  // Mapear inspecciones
-  const mapa = {};
-  insp.forEach(i => {
-    const key = [i.Area, i.Sector, i.Subsector, i.Punto].join('|');
-    mapa[key] = i;
+  // Agrupar por área → sector
+  const grupos = {};
+  state.plantilla.forEach(p => {
+    if (!grupos[p.Area]) grupos[p.Area] = {};
+    if (!grupos[p.Area][p.Sector]) grupos[p.Area][p.Sector] = [];
+    grupos[p.Area][p.Sector].push(p);
   });
 
-  const puntos = plantilla.map(p => {
-    const key = [p.Area, p.Sector, p.Subsector, p.Punto].join('|');
-    const reg = mapa[key] || {};
-    return { ...p, ...reg, estado: reg.Estado || 'pendiente' };
+  // Calcular avance por área
+  const avanceMap = {};
+  state.avance.forEach(p => {
+    const key = p.Area + '|' + p.Sector;
+    if (!avanceMap[key]) avanceMap[key] = { total: 0, tocados: 0 };
+    avanceMap[key].total++;
+    if (p.estado !== 'pendiente') avanceMap[key].tocados++;
   });
 
-  const total    = puntos.length;
-  const conformes = puntos.filter(p => p.estado === 'conforme').length;
-  const conNC    = puntos.filter(p => p.estado === 'nc').length;
-  const pendientes = puntos.filter(p => p.estado === 'pendiente').length;
+  const avanceArea = {};
+  state.avance.forEach(p => {
+    if (!avanceArea[p.Area]) avanceArea[p.Area] = { total: 0, tocados: 0 };
+    avanceArea[p.Area].total++;
+    if (p.estado !== 'pendiente') avanceArea[p.Area].tocados++;
+  });
 
-  return {
-    ok: true,
-    data: {
-      ruta: {
-        idRuta:       ruta.IDRuta,
-        tipoRuta:     ruta.TipoRuta,
-        fechaInicio:  normFecha(ruta.FechaInicio),
-        fechaFin:     normFecha(ruta.FechaFin),
-        estado:       ruta.Estado
-      },
-      inspector: inspector || { Nombre: 'Desconocido', Legajo: ruta.Legajo },
-      resumen: { total, conformes, conNC, pendientes },
-      puntos
+  let html = '';
+  Object.entries(grupos).forEach(([area, sectores], aIdx) => {
+    const av = avanceArea[area] || { total: Object.values(sectores).flat().length, tocados: 0 };
+    const pct = av.total > 0 ? Math.round((av.tocados / av.total) * 100) : 0;
+
+    const sectoresHtml = Object.entries(sectores).map(([sector, puntos]) => {
+      // Agrupar por subsector
+      const subsectoresUnicos = [...new Set(puntos.map(p => p.Subsector))];
+      const totalSubs = subsectoresUnicos.length;
+      const subsCerrados = subsectoresUnicos.filter(sub => {
+        const key = area + '|' + sector + '|' + sub;
+        if (state.sectoresCerrados && state.sectoresCerrados[key]) return true;
+        // También contar si todos los puntos del subsector están marcados
+        const puntosSub = state.avance.filter(p =>
+          p.Area === area && p.Sector === sector && p.Subsector === sub &&
+          p.Punto !== '✓ SECTOR CERRADO'
+        );
+        const plantSub = puntos.filter(p => p.Subsector === sub);
+        return plantSub.length > 0 && puntosSub.length >= plantSub.length &&
+          puntosSub.every(p => p.estado !== 'pendiente');
+      }).length;
+
+      const chipCls = subsCerrados === totalSubs && totalSubs > 0 ? 'done' : subsCerrados > 0 ? 'partial' : '';
+
+      // Última inspección del subsector (de rutas anteriores)
+      const subsectorInfo = subsectoresUnicos.map(sub => {
+        const key = area + '|' + sector + '|' + sub;
+        const ultima = state.ultimaPorSubsector && state.ultimaPorSubsector[key];
+        return ultima
+          ? `<div style="font-size:10px;color:var(--muted);font-family:'DM Mono',monospace;">${sub}: ${ultima.fecha} — ${ultima.inspector}</div>`
+          : '';
+      }).join('');
+
+      return `
+        <div class="sector-item" onclick="openSector('${area}', '${sector}')">
+          <div style="flex:1;">
+            <div class="sector-name">${sector}</div>
+            <div class="sector-sub">${subsCerrados}/${totalSubs} subsectores</div>
+            ${subsectorInfo}
+          </div>
+          <div class="sector-right">
+            <span class="pct-chip ${chipCls}">${totalSubs > 0 ? Math.round(subsCerrados/totalSubs*100) : 0}%</span>
+            <span style="color:var(--muted)">›</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    html += `
+      <div class="area-group" id="area-group-${aIdx}">
+        <div class="area-toggle" onclick="toggleArea(${aIdx})">
+          <div class="area-toggle-left">
+            <span class="area-badge">N2</span>
+            <span class="area-toggle-title">${area}</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="area-pct">${pct}%</span>
+            <span class="chevron">▼</span>
+          </div>
+        </div>
+        <div class="sector-list" style="display:none;">${sectoresHtml}</div>
+      </div>
+    `;
+  });
+
+  content.innerHTML = html;
+
+  // Verificar si todos completados
+  const total   = state.avance.length;
+  const tocados = state.avance.filter(p => p.estado !== 'pendiente').length;
+  const cerrarBtn = document.getElementById('cerrar-ruta-section');
+  cerrarBtn.style.display = (total > 0 && tocados === total) ? 'block' : 'none';
+}
+
+function toggleArea(idx) {
+  const group = document.getElementById('area-group-' + idx);
+  const list  = group.querySelector('.sector-list');
+  const open  = group.classList.contains('open');
+  group.classList.toggle('open', !open);
+  list.style.display = open ? 'none' : 'block';
+}
+
+// ══════════════════════════════════════════════════════
+// INICIAR RUTA
+// ══════════════════════════════════════════════════════
+async function iniciarRuta() {
+  showToast('Iniciando ruta...', 'load', 0);
+  try {
+    const r = await api('iniciarRuta', {
+      legajo: state.inspector.Legajo,
+      tipoRuta: state.tipoRutaSeleccionada
+    });
+    hideToast();
+    if (!r.ok) { showToast(r.error || 'Error al iniciar', 'err'); return; }
+    showToast('¡Ruta iniciada!', 'ok');
+    await openRuta(state.tipoRutaSeleccionada, r.data.idRuta);
+  } catch(e) { showToast('Error de conexión', 'err'); }
+}
+
+// ══════════════════════════════════════════════════════
+// SECTOR → PUNTOS
+// ══════════════════════════════════════════════════════
+async function openSector(area, sector) {
+  state.sectorActual = { area, sector };
+  document.getElementById('subsectores-title').textContent = sector;
+  document.getElementById('subsectores-sub').textContent = area;
+  showScreen('screen-subsectores');
+
+  // Primero refrescar desde Sheets, luego renderizar
+  showToast('Cargando...', 'load', 0);
+  try {
+    const avR = await api('getAvance', { idRuta: state.rutaActiva.idRuta });
+    state.avance = avR.data?.puntos || [];
+    state.sectoresCerrados = {};
+    (avR.data?.sectorsCerrados || []).forEach(sc => {
+      const key = sc.Area + '|' + sc.Sector + '|' + sc.Subsector;
+      state.sectoresCerrados[key] = sc.FechaHora || 'cerrado';
+    });
+    hideToast();
+  } catch(e) {
+    hideToast();
+  }
+  renderSubsectores();
+}
+
+function renderSubsectores() {
+  const { area, sector } = state.sectorActual;
+  const content = document.getElementById('subsectores-content');
+
+  // Obtener subsectores únicos del sector
+  const puntosSector = state.plantilla.filter(p => p.Area === area && p.Sector === sector);
+  const subsectores = [...new Set(puntosSector.map(p => p.Subsector))];
+
+  if (!subsectores.length) {
+    content.innerHTML = `<div class="empty-state"><div class="empty-icon">📋</div><p>No hay subsectores cargados.</p></div>`;
+    return;
+  }
+
+  const html = subsectores.map(sub => {
+    // Avance del subsector
+    const puntosSub = state.avance.filter(p =>
+      p.Area === area && p.Sector === sector && p.Subsector === sub &&
+      p.Punto !== '✓ SECTOR CERRADO'
+    );
+    const plantSub = puntosSector.filter(p => p.Subsector === sub);
+    const total    = plantSub.length;
+    const marcados = puntosSub.filter(p => p.estado !== 'pendiente').length;
+    const conNC    = puntosSub.filter(p => p.estado === 'nc').length;
+    const cerradoEnState = state.sectoresCerrados?.[area+'|'+sector+'|'+sub];
+    const cerradoEnAvance = state.avance.find(p =>
+      p.Area === area && p.Sector === sector && p.Subsector === sub &&
+      (p.Punto === '✓ SECTOR CERRADO' || p.Punto === 'SECTOR CERRADO')
+    );
+    const cerrado = cerradoEnState || (cerradoEnAvance ? (cerradoEnAvance.fechaHora || 'cerrado') : null);
+    const esCerrado = !!(cerrado);
+
+    // Última inspección
+    const ultima = state.ultimaPorSubsector?.[area+'|'+sector+'|'+sub];
+
+    const pct = total > 0 ? Math.round(marcados / total * 100) : 0;
+    const chipCls = esCerrado ? 'done' : pct === 100 ? 'done' : pct > 0 ? 'partial' : '';
+    const chipLabel = esCerrado ? '✓ Cerrado' : pct + '%';
+
+    return `
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:10px;overflow:hidden;">
+        <div class="sector-item" onclick="openSubsector('${area}','${sector}','${sub}')" style="border-bottom:1px solid var(--border);">
+          <div style="flex:1;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px;">
+              ${esCerrado ? `<button onclick="event.stopPropagation();generarPDF('${area}','${sector}','${sub}')"
+                style="background:rgba(0,212,170,.1);border:1px solid var(--accent);color:var(--accent);
+                       border-radius:6px;padding:4px 10px;font-size:11px;font-weight:700;
+                       font-family:'Syne',sans-serif;cursor:pointer;white-space:nowrap;">
+                📄 PDF
+              </button>` : ''}
+              <span class="sector-name">${sub}</span>
+            </div>
+            <div class="sector-sub">
+              ${esCerrado ? `Cerrado — ${cerrado || ''}` : `${marcados}/${total} puntos${conNC > 0 ? ` · ${conNC} NC` : ''}`}
+            </div>
+          </div>
+          <div class="sector-right">
+            <span class="pct-chip ${chipCls}">${chipLabel}</span>
+            <span style="color:var(--muted)">›</span>
+          </div>
+        </div>
+        <div id="historial-${sub.replace(/\s+/g,'-')}" style="padding:0;">
+          <!-- historial cargado async -->
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  content.innerHTML = `<div style="padding:16px;">${html}</div>`;
+
+  // Cargar historial de cada subsector en background
+  subsectores.forEach(sub => {
+    cargarHistorialSubsector(area, sector, sub);
+  });
+}
+
+// ── Cargar historial de rutas por subsector ──
+async function cargarHistorialSubsector(area, sector, subsector) {
+  const divId = 'historial-' + subsector.replace(/\s+/g, '-');
+  const div = document.getElementById(divId);
+  if (!div) return;
+
+  try {
+    const r = await api('getHistorialSubsector', {
+      tipoRuta: state.tipoRutaSeleccionada,
+      area, sector, subsector
+    });
+    if (!r.ok || !r.data || r.data.length === 0) {
+      div.innerHTML = '';
+      return;
     }
+
+    const rows = r.data.map(h => {
+      const estadoColor = h.estado === 'cerrada' ? 'var(--accent)' : 'var(--accent2)';
+      const estadoLabel = h.estado === 'cerrada' ? 'Cerrada' : 'En curso';
+      const ncBadge = h.cantNC > 0
+        ? `<span style="color:var(--danger);font-size:10px;font-family:'DM Mono',monospace;">${h.cantNC} NC</span>`
+        : '';
+      return `
+        <div style="display:flex;align-items:center;justify-content:space-between;
+                    padding:7px 14px;border-bottom:1px solid var(--border);">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="width:6px;height:6px;border-radius:50%;background:${estadoColor};display:inline-block;flex-shrink:0;"></span>
+            <span style="font-size:11px;color:${estadoColor};font-family:'DM Mono',monospace;font-weight:700;">${estadoLabel}</span>
+            <span style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">${h.fecha}</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            ${ncBadge}
+            <span style="font-size:11px;color:var(--muted);">${h.inspector}</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    div.innerHTML = rows;
+  } catch(e) {
+    div.innerHTML = '';
+  }
+}
+
+async function openSubsector(area, sector, subsector) {
+  state.sectorActual = { area, sector, subsector };
+  document.getElementById('puntos-title').textContent = subsector;
+  document.getElementById('puntos-sub').textContent = sector + ' · ' + area;
+  showScreen('screen-puntos');
+  renderPuntos();
+}
+
+function renderPuntos() {
+  const { area, sector, subsector } = state.sectorActual;
+  const content = document.getElementById('puntos-content');
+
+  const puntosSub = state.avance.filter(p =>
+    p.Area === area && p.Sector === sector && p.Subsector === subsector &&
+    p.Punto !== '✓ SECTOR CERRADO'
+  );
+
+  if (!puntosSub.length) {
+    content.innerHTML = `<div class="empty-state"><div class="empty-icon">📋</div><p>No hay puntos en este subsector.</p></div>`;
+    return;
+  }
+
+  const noListados = state.avance.filter(p =>
+    p.Area === area && p.Sector === sector && p.Subsector === subsector && p.Punto === '⚑ Hallazgo no listado'
+  );
+
+  const items = puntosSub.sort((a,b) => Number(a.Orden) - Number(b.Orden)).map(p => {
+    const pKey = JSON.stringify({area: p.Area, sector: p.Sector, subsector: p.Subsector, punto: p.Punto});
+    const ncsHtml = p.estado === 'nc' && p.cantNC > 0
+      ? Array.from({length: p.cantNC}, (_,i) => {
+          const obs = p['NC'+(i+1)+'_Obs'] || '';
+          return `<div class="nc-row-item" 
+            data-area="${p.Area}" data-sector="${p.Sector}" data-subsector="${p.Subsector}" 
+            data-punto="${p.Punto.replace(/"/g,'&quot;')}" data-ncidx="${i+1}"
+            style="font-size:12px;padding:4px 8px;margin-top:3px;display:flex;align-items:center;gap:6px;
+                   background:rgba(255,71,87,.06);border:1px solid rgba(255,71,87,.2);border-radius:6px;cursor:pointer;">
+            <span style="color:var(--danger);font-weight:700;font-size:11px;">NC ${i+1}</span>
+            <span style="color:var(--text);flex:1;">→ ${obs || 'Sin descripción'}</span>
+            <span style="color:var(--muted);font-size:11px;">👁</span>
+          </div>`;
+        }).join('')
+      : '';
+
+    const estaConforme = p.estado === 'conforme';
+    const tieneNC = p.estado === 'nc' && p.cantNC > 0;
+    const bloqueado = !!(state.sectoresCerrados?.[area+'|'+sector+'|'+subsector]);
+
+    const btnConformeStyle = estaConforme
+      ? `background:rgba(0,212,170,.2);border:1.5px solid var(--accent);color:var(--accent);`
+      : bloqueado || tieneNC
+        ? `background:transparent;border:1.5px solid var(--border);color:var(--border);cursor:not-allowed;opacity:.3;`
+        : `background:transparent;border:1.5px solid var(--border);color:var(--muted);`;
+
+    const btnNCStyle = bloqueado
+      ? `background:transparent;border:1.5px solid var(--border);color:var(--border);cursor:not-allowed;opacity:.3;`
+      : p.estado==='nc'
+        ? `background:rgba(255,71,87,.15);border:1.5px solid var(--danger);color:var(--danger);`
+        : `background:transparent;border:1.5px solid var(--border);color:var(--muted);`;
+
+    return `
+      <div style="padding:12px 14px;border-bottom:1px solid var(--border);">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;">
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:14px;font-weight:700;margin-bottom:${ncsHtml ? '6px' : '0'};">${p.Punto}</div>
+            ${ncsHtml}
+          </div>
+          <div style="display:flex;gap:6px;flex-shrink:0;">
+            <button onclick="${bloqueado || tieneNC ? '' : `marcarConformeDirecto('${p.Area}','${p.Sector}','${p.Subsector}','${p.Punto}','${p.Orden}')`}"
+              ${bloqueado || tieneNC ? 'disabled' : ''}
+              style="${btnConformeStyle}border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;font-family:'Syne',sans-serif;cursor:${bloqueado||tieneNC?'not-allowed':'pointer'};white-space:nowrap;">
+              ✓ Conforme
+            </button>
+            <button onclick="${bloqueado ? '' : `abrirNCDirecto('${p.Area}','${p.Sector}','${p.Subsector}','${p.Punto}','${p.Orden}')`}"
+              ${bloqueado ? 'disabled' : ''}
+              style="${btnNCStyle}border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;font-family:'Syne',sans-serif;cursor:${bloqueado?'not-allowed':'pointer'};white-space:nowrap;">
+              ⚠ NC${p.cantNC > 0 ? ' ('+p.cantNC+')' : ''}
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  const noListadosHtml = noListados.map(p => {
+    const bloqueado = !!(state.sectoresCerrados?.[area+'|'+sector+'|'+subsector]);
+    return `
+    <div style="padding:10px 14px;border-bottom:1px solid var(--border);background:rgba(255,165,2,.04);">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+        <div>
+          <div style="font-size:13px;font-weight:700;color:var(--warn);">⚑ Hallazgo no listado</div>
+          <div style="font-size:11px;color:var(--muted);">${p.cantNC} registro(s)</div>
+        </div>
+        <button onclick="abrirNCManual('${area}','${sector}','${subsector}')"
+          style="background:rgba(255,165,2,.1);border:1px solid var(--warn);color:var(--warn);
+                 border-radius:8px;padding:7px 12px;font-size:12px;font-weight:700;
+                 font-family:'Syne',sans-serif;cursor:pointer;">
+          + Agregar
+        </button>
+      </div>
+    </div>
+  `}).join('');
+
+  const sectorCerrado = state.sectoresCerrados?.[area+'|'+sector+'|'+subsector];
+  const btnNoListado = `
+    <div style="padding:10px 12px;border-top:1px dashed var(--border);">
+      <button onclick="abrirNCManual('${area}','${sector}','${subsector}')"
+        style="width:100%;background:transparent;border:1px dashed var(--warn);color:var(--warn);
+               border-radius:10px;padding:10px 14px;font-size:12px;font-weight:600;
+               font-family:'Syne',sans-serif;cursor:pointer;display:flex;align-items:center;
+               justify-content:center;gap:8px;">
+        ＋ Registrar hallazgo no listado
+        <span style="font-size:10px;font-weight:400;color:var(--muted);">para algo fuera de la lista</span>
+      </button>
+    </div>
+  `;
+  const ultimaInsp = state.ultimaPorSubsector?.[area+'|'+sector+'|'+subsector];
+  const totalPuntos = puntosSub.length;
+  const marcados = puntosSub.filter(p => p.estado !== 'pendiente').length;
+  const todosCompletos = marcados === totalPuntos;
+
+  const cierreHtml = sectorCerrado
+    ? `<div class="sector-cerrado-badge">
+         <span style="flex:1;">✓ Sector cerrado — ${sectorCerrado}</span>
+         <button onclick="nuevaInspeccionSubsector('${area}','${sector}','${subsector}')"
+           style="background:rgba(0,153,255,.15);border:1px solid var(--accent2);color:var(--accent2);
+                  border-radius:8px;padding:6px 12px;font-size:11px;font-weight:700;
+                  font-family:'Syne',sans-serif;cursor:pointer;">
+           + Nueva inspección
+         </button>
+       </div>`
+    : `<div style="padding:10px 12px;border-top:1px solid var(--border);">
+         ${ultimaInsp ? `<div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;margin-bottom:8px;">Última: ${ultimaInsp.fecha} — ${ultimaInsp.inspector}</div>` : ''}
+         <button class="btn-cerrar-sector" ${!todosCompletos ? 'disabled' : ''}
+           onclick="cerrarSector('${area}','${sector}','${subsector}')">
+           ${todosCompletos ? '✓ Cerrar sector' : `✓ Cerrar sector (${marcados}/${totalPuntos} completados)`}
+         </button>
+         ${!todosCompletos ? `<div style="font-size:11px;color:var(--muted);text-align:center;margin-top:6px;font-family:'DM Mono',monospace;">Completá todos los puntos para cerrar el sector</div>` : ''}
+       </div>`;
+
+  content.innerHTML = `
+    <div class="subsector-group" style="margin:16px;">
+      ${items}
+      ${noListadosHtml}
+      ${btnNoListado}
+      ${cierreHtml}
+    </div>
+  `;
+}
+
+// ── Nueva inspección en subsector cerrado ──
+async function nuevaInspeccionSubsector(area, sector, subsector) {
+  const msg = `Iniciar nueva inspección en:\n${subsector} — ${sector}\n\nLa inspección anterior queda archivada.\n¿Confirmar?`;
+  if (!confirm(msg)) return;
+
+  showToast('Iniciando nueva inspección...', 'load', 0);
+  try {
+    // Paso 1: cerrar la ruta actual si está en curso
+    if (state.rutaActiva?.idRuta) {
+      await api('cerrarRuta', { idRuta: state.rutaActiva.idRuta });
+    }
+
+    // Paso 2: crear nueva ruta
+    const r = await api('iniciarRuta', {
+      legajo:   state.inspector.Legajo,
+      tipoRuta: state.tipoRutaSeleccionada
+    });
+
+    if (!r.ok) { showToast(r.error || 'Error al iniciar', 'err'); return; }
+
+    const idRuta = r.data.idRuta;
+
+    // Paso 3: actualizar estado con nueva ruta — pizarra limpia
+    state.rutaActiva = { tipoRuta: state.tipoRutaSeleccionada, idRuta };
+    const [plantR, avR] = await Promise.all([
+      api('getPlantilla', { ruta: state.tipoRutaSeleccionada }),
+      api('getAvance', { idRuta })
+    ]);
+    state.plantilla = plantR.data || [];
+    state.avance    = avR.data?.puntos || [];
+    state.sectoresCerrados = {};
+
+    hideToast();
+    showToast('✓ Nueva inspección iniciada', 'ok');
+
+    // Ir directo al subsector
+    state.sectorActual = { area, sector, subsector };
+    document.getElementById('puntos-title').textContent = subsector;
+    document.getElementById('puntos-sub').textContent = sector + ' · ' + area;
+    showScreen('screen-puntos');
+    renderPuntos();
+  } catch(e) { showToast('Error de conexión', 'err'); }
+}
+
+// ── Sincronización en segundo plano ──
+const _pendienteSync = new Set();
+
+async function sincronizarPunto(area, sector, subsector, punto, orden, estado) {
+  const key = area+'|'+sector+'|'+subsector+'|'+punto;
+  _pendienteSync.add(key);
+  actualizarIndicadorSync();
+
+  try {
+    if (estado === 'conforme') {
+      await api('marcarConforme', {
+        idRuta: state.rutaActiva.idRuta,
+        area, sector, subsector, punto, orden,
+        legajo: state.inspector.Legajo
+      });
+    }
+    _pendienteSync.delete(key);
+    actualizarIndicadorSync();
+  } catch(e) {
+    // Silencioso — el botón guardar sirve como respaldo
+    _pendienteSync.delete(key);
+    actualizarIndicadorSync();
+  }
+}
+
+function actualizarIndicadorSync() {
+  const btn = document.getElementById('btn-guardar-cambios');
+  if (!btn) return;
+  if (_pendienteSync.size > 0) {
+    btn.textContent = '⏳ Sincronizando...';
+    btn.style.borderColor = 'var(--warn)';
+    btn.style.color = 'var(--warn)';
+  } else {
+    btn.textContent = '💾 Guardar';
+    btn.style.borderColor = 'var(--accent2)';
+    btn.style.color = 'var(--accent2)';
+  }
+}
+
+// ══════════════════════════════════════════════════════
+// GENERAR PDF
+// ══════════════════════════════════════════════════════
+async function generarPDF(area, sector, subsector) {
+  showToast('Preparando PDF...', 'load', 0);
+
+  try {
+    // Cargar jsPDF dinámicamente
+    if (!window.jspdf) {
+      await new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+        script.onload = resolve;
+        script.onerror = reject;
+        document.head.appendChild(script);
+      });
+    }
+
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    const W = 210; // ancho A4
+    const margin = 15;
+    let y = margin;
+
+    // Colores
+    const colorPrimario  = [0, 100, 80];
+    const colorNC        = [200, 50, 50];
+    const colorGris      = [100, 100, 100];
+    const colorBorde     = [220, 220, 220];
+
+    // ── Encabezado ──
+    doc.setFillColor(20, 25, 40);
+    doc.rect(0, 0, W, 35, 'F');
+
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(16);
+    doc.setFont('helvetica', 'bold');
+    doc.text('INFORME DE INSPECCIÓN', margin, 13);
+
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(180, 190, 210);
+    const tipoLabel = state.tipoRutaSeleccionada === 'EST' ? 'Ruta Estructural' : 'Ruta Máquinas y Equipos';
+    doc.text(`${tipoLabel}  ›  ${area}  ›  ${sector}  ›  ${subsector}`, margin, 21);
+    doc.text(`Inspector: ${state.inspector.Nombre}  |  Legajo: ${state.inspector.Legajo}  |  Fecha: ${new Date().toLocaleDateString('es-PY')}`, margin, 28);
+
+    y = 45;
+
+    // ── Puntos ──
+    const puntosSub = state.avance.filter(p =>
+      p.Area === area && p.Sector === sector && p.Subsector === subsector &&
+      p.Punto !== '✓ SECTOR CERRADO' && p.Punto !== '⚑ Hallazgo no listado'
+    );
+    const noListados = state.avance.filter(p =>
+      p.Area === area && p.Sector === sector && p.Subsector === subsector &&
+      p.Punto === '⚑ Hallazgo no listado'
+    );
+    const todosLosPuntos = [...puntosSub, ...noListados].sort((a,b) => Number(a.Orden) - Number(b.Orden));
+
+    for (const p of todosLosPuntos) {
+      // Verificar espacio en página
+      if (y > 260) { doc.addPage(); y = margin; }
+
+      const esNC = p.estado === 'nc' && p.cantNC > 0;
+      const esNoListado = p.Punto === '⚑ Hallazgo no listado';
+
+      // Título del punto
+      doc.setFillColor(esNC || esNoListado ? 255 : 245, esNC || esNoListado ? 240 : 250, esNC || esNoListado ? 240 : 245);
+      doc.rect(margin, y, W - margin*2, 10, 'F');
+      doc.setDrawColor(...colorBorde);
+      doc.rect(margin, y, W - margin*2, 10, 'S');
+
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      if (esNC || esNoListado) {
+        doc.setTextColor(colorNC[0], colorNC[1], colorNC[2]);
+      } else {
+        doc.setTextColor(colorPrimario[0], colorPrimario[1], colorPrimario[2]);
+      }
+      doc.text(p.Punto, margin + 4, y + 7);
+
+      const estadoLabel = p.estado === 'conforme' ? 'CONFORME' : p.cantNC > 0 ? `NC (${p.cantNC})` : 'PENDIENTE';
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(...colorGris);
+      doc.text(estadoLabel, W - margin - 4, y + 7, { align: 'right' });
+      y += 12;
+
+      // NCs del punto
+      if (esNC || esNoListado) {
+        const cantNC = Number(p.cantNC) || 0;
+        for (let i = 1; i <= cantNC; i++) {
+          if (y > 250) { doc.addPage(); y = margin; }
+
+          const obs   = p['NC'+i+'_Obs']   || '';
+          const foto1 = p['NC'+i+'_Foto1'] || '';
+          const foto2 = p['NC'+i+'_Foto2'] || '';
+          const plano = p['NC'+i+'_Plano'] || '';
+
+          // Número NC + observación como título
+          doc.setFontSize(9);
+          doc.setFont('helvetica', 'bold');
+          doc.setTextColor(colorNC[0], colorNC[1], colorNC[2]);
+          const ncTitulo = obs ? `NC #${i} — ${obs}` : `NC #${i}`;
+          const ncLines = doc.splitTextToSize(ncTitulo, W - margin*2 - 8);
+          ncLines.forEach(line => {
+            if (y > 270) { doc.addPage(); y = margin; }
+            doc.text(line, margin + 4, y);
+            y += 5;
+          });
+          y += 3;
+
+          // 3 imágenes en fila igual — foto1, foto2, plano (sin etiquetas)
+          const cols3 = [foto1 || null, foto2 || null, plano || null];
+          const hasFotos = cols3.some(Boolean);
+          if (hasFotos) {
+            showToast(`Cargando imágenes NC #${i}...`, 'load', 0);
+            const IMG_H = 55;
+            const GAP   = 4;
+            const colW  = (W - margin*2 - GAP*2) / 3;
+            if (y + IMG_H + 6 > 272) { doc.addPage(); y = margin; }
+            for (let j = 0; j < 3; j++) {
+              const x = margin + j * (colW + GAP);
+              // Marco punteado
+              doc.setDrawColor(210, 210, 210);
+              doc.setLineDashPattern([1.5, 1.5], 0);
+              doc.rect(x, y, colW, IMG_H, 'S');
+              doc.setLineDashPattern([], 0);
+              if (cols3[j]) {
+                try {
+                  const imgData = await cargarImagenComoBase64(cols3[j]);
+                  const tmp = new Image();
+                  await new Promise(res => { tmp.onload = res; tmp.onerror = res; tmp.src = imgData; });
+                  const ratio = tmp.naturalHeight > 0 ? tmp.naturalWidth / tmp.naturalHeight : 4/3;
+                  let drawW = colW - 2;
+                  let drawH = drawW / ratio;
+                  if (drawH > IMG_H - 2) { drawH = IMG_H - 2; drawW = drawH * ratio; }
+                  const offX = (colW - drawW) / 2;
+                  const offY = (IMG_H - drawH) / 2;
+                  doc.addImage(imgData, 'JPEG', x + offX, y + offY, drawW, drawH);
+                } catch(e) { /* marco vacío */ }
+              }
+            }
+            y += IMG_H + 4;
+          }
+          // Línea separadora entre NCs
+          doc.setDrawColor(220, 220, 220);
+          doc.line(margin, y, W - margin, y);
+          y += 5;
+        }
+      }
+      y += 4;
+    }
+
+    // ── Pie de página en todas las páginas ──
+    const totalPags = doc.getNumberOfPages();
+    for (let i = 1; i <= totalPags; i++) {
+      doc.setPage(i);
+      doc.setFontSize(7);
+      doc.setTextColor(...colorGris);
+      doc.text(`Página ${i} de ${totalPags}  |  ${subsector} — ${sector}  |  ${new Date().toLocaleDateString('es-PY')}`,
+        W / 2, 292, { align: 'center' });
+    }
+
+    hideToast();
+    showToast('✓ PDF generado', 'ok');
+
+    // Guardar PDF
+    const nombreArchivo = `Inspeccion_${subsector.replace(/\s+/g,'-')}_${new Date().toISOString().slice(0,10)}.pdf`;
+    doc.save(nombreArchivo);
+
+  } catch(e) {
+    hideToast();
+    showToast('Error al generar PDF: ' + e.message, 'err');
+    console.error(e);
+  }
+}
+
+function driveThumbUrl(url) {
+  if (!url) return url;
+  // Extraer ID de cualquier formato de URL de Drive
+  let id = null;
+  const m1 = url.match(/[?&]id=([^&]+)/);
+  const m2 = url.match(/\/d\/([^/]+)/);
+  const m3 = url.match(/thumbnail\?id=([^&]+)/);
+  if (m1) id = m1[1];
+  else if (m2) id = m2[1];
+  else if (m3) id = m3[1];
+  if (id) return `https://lh3.googleusercontent.com/d/${id}`;
+  return url;
+}
+
+// ── Cargar imagen como base64 para jsPDF ──
+function cargarImagenComoBase64(url) {
+  return new Promise((resolve, reject) => {
+    // Intentar múltiples formatos de URL
+    const urls = [
+      driveThumbUrl(url),
+      url.replace('uc?export=view', 'uc?export=download'),
+      url
+    ];
+
+    function tryUrl(idx) {
+      if (idx >= urls.length) { reject(new Error('No se pudo cargar')); return; }
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      const timer = setTimeout(() => { img.src = ''; tryUrl(idx + 1); }, 5000);
+      img.onload = () => {
+        clearTimeout(timer);
+        try {
+          const canvas = document.createElement('canvas');
+          const w = img.naturalWidth  || 800;
+          const h = img.naturalHeight || 600;
+          canvas.width  = w;
+          canvas.height = h;
+          canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+          resolve(canvas.toDataURL('image/jpeg', 0.85));
+        } catch(e) { tryUrl(idx + 1); }
+      };
+      img.onerror = () => { clearTimeout(timer); tryUrl(idx + 1); };
+      img.src = urls[idx];
+    }
+    tryUrl(0);
+  });
+}
+// ══════════════════════════════════════════════════════
+async function guardarCambios(silencioso = false) {
+  const { area, sector, subsector } = state.sectorActual;
+  const btn = document.getElementById('btn-guardar-cambios');
+
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Guardando...'; }
+  if (!silencioso) showToast('Guardando cambios...', 'load', 0);
+
+  try {
+    const puntosSub = state.avance.filter(p =>
+      p.Area === area && p.Sector === sector && p.Subsector === subsector &&
+      p.Punto !== '✓ SECTOR CERRADO'
+    );
+
+    // Guardar conformes
+    const promesasConformes = puntosSub
+      .filter(p => p.estado === 'conforme')
+      .map(p => api('marcarConforme', {
+        idRuta:    state.rutaActiva.idRuta,
+        area:      p.Area,
+        sector:    p.Sector,
+        subsector: p.Subsector,
+        punto:     p.Punto,
+        orden:     p.Orden,
+        legajo:    state.inspector.Legajo
+      }));
+
+    // Guardar NCs
+    const promesasNC = puntosSub
+      .filter(p => p.estado === 'nc' && p.cantNC > 0)
+      .map(p => {
+        const ncs = [];
+        for (let i = 1; i <= p.cantNC; i++) {
+          ncs.push({
+            obs:   p['NC'+i+'_Obs']   || '',
+            foto1: p['NC'+i+'_Foto1'] || '',
+            foto2: p['NC'+i+'_Foto2'] || '',
+            plano: p['NC'+i+'_Plano'] || ''
+          });
+        }
+        return api('guardarNC', {
+          idRuta:    state.rutaActiva.idRuta,
+          area:      p.Area,
+          sector:    p.Sector,
+          subsector: p.Subsector,
+          punto:     p.Punto,
+          orden:     p.Orden,
+          legajo:    state.inspector.Legajo,
+          ncs
+        });
+      });
+
+    await Promise.all([...promesasConformes, ...promesasNC]);
+
+    if (!silencioso) showToast('✓ Cambios guardados correctamente', 'ok');
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '✓ Guardado';
+      btn.style.borderColor = 'var(--accent)';
+      btn.style.color = 'var(--accent)';
+      setTimeout(() => {
+        btn.textContent = '💾 Guardar';
+        btn.style.borderColor = 'var(--accent2)';
+        btn.style.color = 'var(--accent2)';
+      }, 3000);
+    }
+    return true;
+  } catch(e) {
+    showToast('Error al guardar', 'err');
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Guardar'; }
+    return false;
+  }
+}
+
+// ══════════════════════════════════════════════════════
+// CERRAR SECTOR
+// ══════════════════════════════════════════════════════
+async function cerrarSector(area, sector, subsector) {
+  const puntosSector = state.avance.filter(p =>
+    p.Area === area && p.Sector === sector && p.Subsector === subsector &&
+    p.Punto !== '⚑ Hallazgo no listado' && p.Punto !== '✓ SECTOR CERRADO'
+  );
+  const conformes = puntosSector.filter(p => p.estado === 'conforme').length;
+  const conNC     = puntosSector.filter(p => p.estado === 'nc').length;
+  const total     = puntosSector.length;
+
+  const msg = `Cerrar sector: ${subsector}\n\n✓ Conformes: ${conformes}\n⚠ Con NC: ${conNC}\nTotal: ${total}\n\n¿Confirmar cierre?`;
+  if (!confirm(msg)) return;
+
+  // Guardar cambios primero
+  showToast('Guardando cambios...', 'load', 0);
+  const guardado = await guardarCambios(true);
+  if (!guardado) return;
+
+  // Luego cerrar el sector
+  showToast('Cerrando sector...', 'load', 0);
+  try {
+    const ahora = new Date().toLocaleString('es-PY', { timeZone: 'America/Asuncion' });
+    const r = await api('marcarConforme', {
+      idRuta:    state.rutaActiva.idRuta,
+      area, sector, subsector,
+      punto:     '✓ SECTOR CERRADO',
+      orden:     9999,
+      legajo:    state.inspector.Legajo
+    });
+    hideToast();
+    if (!r.ok) { showToast(r.error || 'Error', 'err'); return; }
+
+    if (!state.sectoresCerrados) state.sectoresCerrados = {};
+    state.sectoresCerrados[area + '|' + sector + '|' + subsector] = ahora;
+
+    showToast('✓ Sector cerrado', 'ok');
+    setTimeout(() => { goSubsectores(); }, 800);
+  } catch(e) { showToast('Error de conexión', 'err'); }
+}
+
+// ── Abrir NC manual (hallazgo no listado) ──
+function abrirNCManual(area, sector, subsector) {
+  const p = {
+    Area: area, Sector: sector, Subsector: subsector,
+    Punto: '⚑ Hallazgo no listado',
+    Orden: 999, estado: 'pendiente', cantNC: 0
+  };
+  // Buscar si ya tiene registros previos
+  const prev = state.avance.find(x =>
+    x.Area === area && x.Sector === sector && x.Subsector === subsector && x.Punto === '⚑ Hallazgo no listado'
+  );
+  if (prev) p.cantNC = prev.cantNC;
+  state.puntoActual = prev || p;
+
+  document.getElementById('nc-header-title').textContent = 'Hallazgo no listado';
+  document.getElementById('nc-header-sub').textContent = subsector + ' — ' + sector;
+
+  // Reset form
+  state.foto1 = null; state.foto1DataUrl = null; state.foto1Marcada = null;
+  state.foto2 = null; state.foto2DataUrl = null; state.foto2Marcada = null;
+  state.planoMarcado = null; state.planoMarcadoOk = false;
+  document.getElementById('nc-obs').value = '';
+  document.getElementById('canvas-foto-section').style.display = 'none';
+  document.getElementById('btn-guardar-nc').style.display = 'block';
+  document.getElementById('btn-guardar-nc').disabled = true;
+  document.getElementById('panel-post-nc').style.display = 'none';
+  resetSlot(1); resetSlot(2);
+
+  // Hacer todo opcional — quitar badges de requerido
+  state.modoManual = true;
+
+  cargarPlano();
+  checkValidationManual();
+  showScreen('screen-nc');
+
+  // Mostrar aclaración
+  const aclaracion = document.getElementById('nc-manual-aclaracion');
+  if (aclaracion) aclaracion.style.display = 'block';
+}
+
+function checkValidationManual() {
+  // En modo manual todo es opcional — solo habilitar si hay al menos algo
+  const fotoOk  = !!(state.foto1DataUrl || state.foto1Marcada);
+  const obsOk   = document.getElementById('nc-obs').value.trim().length > 0;
+  const planoOk = state.planoMarcadoOk;
+
+  setVal('foto',  fotoOk);
+  setVal('obs',   obsOk);
+  setVal('plano', planoOk);
+
+  // Habilitar si hay al menos uno
+  document.getElementById('btn-guardar-nc').disabled = !(fotoOk || obsOk || planoOk);
+}
+
+// ── Conforme directo desde la lista — guarda en local y sincroniza en background ──
+function marcarConformeDirecto(area, sector, subsector, punto, orden) {
+  actualizarAvanceLocal(area, sector, subsector, punto, 'conforme', 0, {});
+  renderPuntos();
+  // Sincronizar en segundo plano
+  sincronizarPunto(area, sector, subsector, punto, orden, 'conforme');
+}
+
+// ── Abrir NC directo desde la lista ──
+function abrirNCDirecto(area, sector, subsector, punto, orden) {
+  const p = state.avance.find(x =>
+    x.Area === area && x.Sector === sector && x.Subsector === subsector && x.Punto === punto
+  );
+  state.puntoActual = p || { Area: area, Sector: sector, Subsector: subsector, Punto: punto, Orden: orden, estado: 'pendiente', cantNC: 0 };
+  abrirFormNC();
+}
+
+// ══════════════════════════════════════════════════════
+// PUNTO DETALLE (se mantiene para acceso desde historial)
+async function openPunto(area, sector, subsector, punto, orden) {
+  const p = state.avance.find(x =>
+    x.Area === area && x.Sector === sector && x.Subsector === subsector && x.Punto === punto
+  );
+  state.puntoActual = p || { Area: area, Sector: sector, Subsector: subsector, Punto: punto, Orden: orden, estado: 'pendiente', cantNC: 0 };
+
+  document.getElementById('punto-header-title').textContent = punto;
+  document.getElementById('punto-header-sub').textContent = subsector + ' · ' + sector;
+  showScreen('screen-punto');
+  renderPuntoDetalle();
+}
+
+function renderPuntoDetalle() {
+  const p = state.puntoActual;
+  const content = document.getElementById('punto-content');
+
+  // Breadcrumb
+  let html = `
+    <div class="punto-info-card">
+      <div class="breadcrumb">${p.Area} › ${p.Sector} › ${p.Subsector}</div>
+      <div class="punto-title">${p.Punto}</div>
+    </div>
+  `;
+
+  // Si está conforme
+  if (p.estado === 'conforme') {
+    html += `<div class="ya-conforme">✓ Este punto fue marcado como CONFORME</div>`;
+  }
+
+  // Acciones
+  html += `<div class="action-grid">
+    <button class="btn-conforme" onclick="marcarConforme()">
+      <span class="btn-icon">✓</span>Conforme
+    </button>
+    <button class="btn-nc" onclick="abrirFormNC()">
+      <span class="btn-icon">⚠</span>Registrar NC
+    </button>
+  </div>`;
+
+  // NCs existentes
+  if (p.estado === 'nc' && p.cantNC > 0) {
+    html += `<div class="nc-list">`;
+    for (let i = 1; i <= p.cantNC; i++) {
+      const obs   = p['NC'+i+'_Obs']   || '';
+      const foto1 = p['NC'+i+'_Foto1'] || '';
+      const foto2 = p['NC'+i+'_Foto2'] || '';
+      const plano = p['NC'+i+'_Plano'] || '';
+      html += `
+        <div class="nc-card">
+          <div class="nc-card-header">
+            <span class="nc-num">NC #${i}</span>
+            <button class="nc-edit-btn" onclick="openEditObs(${i})">✏️ Editar obs.</button>
+          </div>
+          <div class="nc-fotos">
+            ${foto1 ? `<img class="nc-foto-thumb" src="${foto1}" loading="lazy">` : ''}
+            ${foto2 ? `<img class="nc-foto-thumb" src="${foto2}" loading="lazy">` : ''}
+            ${plano ? `<img class="nc-foto-thumb" src="${plano}" loading="lazy" style="border-color:var(--accent2)">` : ''}
+          </div>
+          ${obs ? `<div class="nc-obs">${obs}</div>` : `<div class="nc-obs-muted">Sin observación</div>`}
+        </div>
+      `;
+    }
+    html += `</div>`;
+  }
+
+  content.innerHTML = html;
+}
+
+// ══════════════════════════════════════════════════════
+// MARCAR CONFORME
+// ══════════════════════════════════════════════════════
+async function marcarConforme() {
+  const p = state.puntoActual;
+  showToast('Guardando...', 'load', 0);
+  try {
+    const r = await api('marcarConforme', {
+      idRuta:    state.rutaActiva.idRuta,
+      area:      p.Area,
+      sector:    p.Sector,
+      subsector: p.Subsector,
+      punto:     p.Punto,
+      orden:     p.Orden,
+      legajo:    state.inspector.Legajo
+    });
+    if (!r.ok) { showToast(r.error || 'Error al guardar', 'err'); return; }
+    showToast('✓ Conforme — avanzando al siguiente punto', 'ok');
+    // Actualizar estado local
+    state.puntoActual.estado = 'conforme';
+    actualizarAvanceLocal(p.Area, p.Sector, p.Subsector, p.Punto, 'conforme', 0, {});
+    // Avanzar automáticamente al siguiente punto pendiente
+    const siguientePunto = getSiguientePendiente(p);
+    if (siguientePunto) {
+      setTimeout(() => openPunto(siguientePunto.Area, siguientePunto.Sector, siguientePunto.Subsector, siguientePunto.Punto, siguientePunto.Orden), 1200);
+    } else {
+      setTimeout(() => { goPuntos(); renderPuntos(); }, 1200);
+    }
+  } catch(e) { showToast('Error de conexión', 'err'); }
+}
+
+// ══════════════════════════════════════════════════════
+// FORMULARIO NC
+// ══════════════════════════════════════════════════════
+function abrirFormNC() {
+  const p = state.puntoActual;
+  state.modoManual = false;
+  // Reset form
+  state.foto1 = null; state.foto1DataUrl = null; state.foto1Marcada = null; state.foto1Url = null;
+  state.foto2 = null; state.foto2DataUrl = null; state.foto2Marcada = null; state.foto2Url = null;
+  state.planoMarcado = null; state.planoMarcadoOk = false; state.planoUrl = null;
+
+  document.getElementById('nc-header-title').textContent = 'No Conformidad';
+  document.getElementById('nc-header-sub').textContent = p.Punto + ' · ' + p.Subsector;
+  document.getElementById('nc-obs').value = '';
+  document.getElementById('canvas-foto-section').style.display = 'none';
+  document.getElementById('btn-guardar-nc').style.display = 'block';
+  document.getElementById('btn-guardar-nc').disabled = true;
+  document.getElementById('btn-guardar-nc').textContent = 'Guardar NC';
+  document.getElementById('panel-post-nc').style.display = 'none';
+  document.getElementById('btn-subir-fotos-wrapper').style.display = 'none';
+  document.getElementById('fotos-status').textContent = '';
+  document.getElementById('btn-identificar-wrapper').style.display = 'none';
+  document.getElementById('plano-status').textContent = '';
+  // Resetear estado visual de botones
+  const btnSubirReset = document.getElementById('btn-subir-fotos');
+  if (btnSubirReset) { btnSubirReset.textContent = '↑ Subir foto(s)'; btnSubirReset.style.background = 'var(--accent2)'; btnSubirReset.disabled = false; }
+  const btnIdReset = document.getElementById('btn-identificar');
+  if (btnIdReset) { btnIdReset.textContent = '📍 Identificar lugar'; btnIdReset.style.background = 'var(--accent2)'; btnIdReset.disabled = false; }
+  const aclaracion = document.getElementById('nc-manual-aclaracion');
+  if (aclaracion) aclaracion.style.display = 'none';
+
+  // Reset slots
+  resetSlot(1); resetSlot(2);
+
+  // Cargar plano
+  cargarPlano();
+  checkValidation();
+  showScreen('screen-nc');
+}
+
+function resetSlot(n) {
+  const slot = document.getElementById('slot-foto' + n);
+  slot.innerHTML = n === 1
+    ? `<div class="foto-icon">📷</div><div class="foto-label">Foto 1</div><div class="foto-overlay"><button class="foto-action-btn" onclick="event.stopPropagation();marcarFoto(${n})">✏️</button><button class="foto-action-btn" onclick="event.stopPropagation();quitarFoto(${n})">🗑️</button></div>`
+    : `<div class="foto-icon">📷</div><div class="foto-label">Foto 2 (opcional)</div><div class="foto-overlay"><button class="foto-action-btn" onclick="event.stopPropagation();marcarFoto(${n})">✏️</button><button class="foto-action-btn" onclick="event.stopPropagation();quitarFoto(${n})">🗑️</button></div>`;
+  document.getElementById('file-foto' + n).value = '';
+}
+
+function selectFoto(n) {
+  document.getElementById('file-foto' + n).click();
+}
+
+function onFotoSelected(n) {
+  const file = document.getElementById('file-foto' + n).files[0];
+  if (!file) return;
+  comprimirImagen(file, 0.75, 1200, dataUrl => {
+    if (n === 1) { state.foto1 = dataUrl; state.foto1DataUrl = dataUrl; state.foto1Marcada = null; state.foto1Url = null; }
+    else         { state.foto2 = dataUrl; state.foto2DataUrl = dataUrl; state.foto2Marcada = null; state.foto2Url = null; }
+    mostrarFotoEnSlot(n, dataUrl);
+    checkValidation();
+    // Mostrar botón subir fotos
+    document.getElementById('btn-subir-fotos-wrapper').style.display = 'block';
+    document.getElementById('fotos-status').textContent = 'Foto lista — tocá "Subir foto(s)" cuando estés listo';
+  });
+}
+
+async function subirFotosManual() {
+  const btn = document.getElementById('btn-subir-fotos');
+  const status = document.getElementById('fotos-status');
+  btn.disabled = true;
+  btn.textContent = 'Subiendo...';
+  status.style.color = 'var(--accent2)';
+  status.textContent = 'Subiendo fotos...';
+
+  try {
+    if (state.foto1 && !state.foto1Url) {
+      status.textContent = 'Subiendo foto 1...';
+      state.foto1Url = await subirFotoAPI(state.foto1, 'foto1_' + Date.now() + '.jpg');
+    }
+    if (state.foto2 && !state.foto2Url) {
+      status.textContent = 'Subiendo foto 2...';
+      state.foto2Url = await subirFotoAPI(state.foto2, 'foto2_' + Date.now() + '.jpg');
+    }
+    btn.textContent = '✓ Fotos subidas';
+    btn.style.background = 'var(--accent)';
+    status.style.color = 'var(--accent)';
+    status.textContent = '✓ Fotos guardadas correctamente';
+    checkValidation();
+  } catch(e) {
+    btn.disabled = false;
+    btn.textContent = '↑ Reintentar subir fotos';
+    btn.style.background = 'var(--danger)';
+    status.style.color = 'var(--danger)';
+    status.textContent = '✗ Error al subir — intentá de nuevo';
+  }
+}
+
+async function identificarLugar() {
+  const btn = document.getElementById('btn-identificar');
+  const status = document.getElementById('plano-status');
+  btn.disabled = true;
+  btn.textContent = 'Guardando ubicación...';
+  status.style.color = 'var(--accent2)';
+  status.textContent = 'Subiendo plano...';
+
+  try {
+    state.planoUrl = await subirFotoAPI(state.planoMarcado, 'plano_' + Date.now() + '.jpg');
+    btn.textContent = '✓ Lugar identificado';
+    btn.style.background = 'var(--accent)';
+    status.style.color = 'var(--accent)';
+    status.textContent = '✓ Ubicación guardada correctamente';
+    checkValidation();
+  } catch(e) {
+    btn.disabled = false;
+    btn.textContent = '📍 Reintentar identificar lugar';
+    btn.style.background = 'var(--danger)';
+    status.style.color = 'var(--danger)';
+    status.textContent = '✗ Error — intentá de nuevo';
+  }
+}
+
+async function subirFotoEnBackground(n, dataUrl) {
+  const slot = document.getElementById('slot-foto' + n);
+  // Indicador discreto de subida
+  const indicator = document.createElement('div');
+  indicator.id = 'upload-indicator-' + n;
+  indicator.style.cssText = 'position:absolute;bottom:4px;left:4px;background:rgba(0,153,255,.8);color:#fff;font-size:10px;padding:2px 6px;border-radius:4px;font-family:DM Mono,monospace;';
+  indicator.textContent = '↑ subiendo...';
+  slot.style.position = 'relative';
+  slot.appendChild(indicator);
+  try {
+    const nombre = 'foto' + n + '_' + Date.now() + '.jpg';
+    const r = await api('subirFoto', {
+      base64: dataUrl.split(',')[1],
+      nombre,
+      mimeType: 'image/jpeg'
+    });
+    if (r.ok) {
+      if (n === 1) state.foto1Url = r.data.url;
+      else         state.foto2Url = r.data.url;
+      indicator.style.background = 'rgba(0,212,170,.8)';
+      indicator.textContent = '✓ listo';
+      setTimeout(() => indicator.remove(), 2000);
+    } else {
+      indicator.style.background = 'rgba(255,71,87,.8)';
+      indicator.textContent = '✗ error';
+    }
+  } catch(e) {
+    const ind = document.getElementById('upload-indicator-' + n);
+    if (ind) { ind.style.background = 'rgba(255,71,87,.8)'; ind.textContent = '✗ error'; }
+  }
+}
+
+function mostrarFotoEnSlot(n, dataUrl) {
+  const slot = document.getElementById('slot-foto' + n);
+  slot.innerHTML = `
+    <img src="${dataUrl}">
+    <div class="foto-overlay">
+      <button class="foto-action-btn" onclick="event.stopPropagation();marcarFoto(${n})">✏️</button>
+      <button class="foto-action-btn" onclick="event.stopPropagation();quitarFoto(${n})">🗑️</button>
+    </div>
+  `;
+}
+
+function quitarFoto(n) {
+  if (n === 1) { state.foto1 = null; state.foto1DataUrl = null; state.foto1Marcada = null; }
+  else         { state.foto2 = null; state.foto2DataUrl = null; state.foto2Marcada = null; }
+  resetSlot(n);
+  checkValidation();
+}
+
+// ── Canvas marcar foto ──
+let canvasCtx = null;
+function marcarFoto(n) {
+  const dataUrl = n === 1 ? (state.foto1Marcada || state.foto1DataUrl) : (state.foto2Marcada || state.foto2DataUrl);
+  if (!dataUrl) return;
+  state.fotoMarcandoIdx = n;
+  const section = document.getElementById('canvas-foto-section');
+  section.style.display = 'block';
+  const canvas = document.getElementById('canvas-foto');
+  const img = new Image();
+  img.onload = () => {
+    canvas.width  = img.width;
+    canvas.height = img.height;
+    canvasCtx = canvas.getContext('2d');
+    canvasCtx.drawImage(img, 0, 0);
+    state.canvasHistory = [canvas.toDataURL()];
+  };
+  img.src = dataUrl;
+  setupCanvasEvents(canvas);
+  section.scrollIntoView({ behavior: 'smooth' });
+}
+
+function setupCanvasEvents(canvas) {
+  canvas.removeEventListener('mousedown',  onCanvasStart);
+  canvas.removeEventListener('mousemove',  onCanvasMove);
+  canvas.removeEventListener('mouseup',    onCanvasEnd);
+  canvas.removeEventListener('touchstart', onCanvasTouchStart);
+  canvas.removeEventListener('touchmove',  onCanvasTouchMove);
+  canvas.removeEventListener('touchend',   onCanvasEnd);
+
+  canvas.addEventListener('mousedown',  onCanvasStart);
+  canvas.addEventListener('mousemove',  onCanvasMove);
+  canvas.addEventListener('mouseup',    onCanvasEnd);
+  canvas.addEventListener('touchstart', onCanvasTouchStart, { passive: false });
+  canvas.addEventListener('touchmove',  onCanvasTouchMove,  { passive: false });
+  canvas.addEventListener('touchend',   onCanvasEnd);
+}
+
+function getCanvasPos(canvas, e) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width  / rect.width;
+  const scaleY = canvas.height / rect.height;
+  return {
+    x: (e.clientX - rect.left) * scaleX,
+    y: (e.clientY - rect.top)  * scaleY
   };
 }
 
-// ============================================================
-// HISTORIAL POR SUBSECTOR
-// ============================================================
-function getHistorialSubsector(body) {
-  const { tipoRuta, area, sector, subsector } = body;
-  if (!tipoRuta || !area || !sector || !subsector) return { ok: false, error: 'Datos incompletos' };
+function onCanvasStart(e) {
+  state.isDrawing = true;
+  const pos = getCanvasPos(e.target, e);
+  state.lastX = pos.x; state.lastY = pos.y;
+}
+function onCanvasTouchStart(e) {
+  e.preventDefault();
+  state.isDrawing = true;
+  const pos = getCanvasPos(e.target, e.touches[0]);
+  state.lastX = pos.x; state.lastY = pos.y;
+}
+function onCanvasMove(e) {
+  if (!state.isDrawing) return;
+  drawLine(e.target, getCanvasPos(e.target, e));
+}
+function onCanvasTouchMove(e) {
+  e.preventDefault();
+  if (!state.isDrawing) return;
+  drawLine(e.target, getCanvasPos(e.target, e.touches[0]));
+}
+function onCanvasEnd() {
+  if (!state.isDrawing) return;
+  state.isDrawing = false;
+  state.canvasHistory.push(document.getElementById('canvas-foto').toDataURL());
+}
+function drawLine(canvas, pos) {
+  if (!canvasCtx) return;
+  canvasCtx.strokeStyle = '#ff0000';
+  canvasCtx.lineWidth   = Math.max(3, canvas.width / 150);
+  canvasCtx.lineCap     = 'round';
+  canvasCtx.lineJoin    = 'round';
+  canvasCtx.beginPath();
+  canvasCtx.moveTo(state.lastX, state.lastY);
+  canvasCtx.lineTo(pos.x, pos.y);
+  canvasCtx.stroke();
+  state.lastX = pos.x; state.lastY = pos.y;
+}
+function undoCanvas() {
+  if (state.canvasHistory.length <= 1) return;
+  state.canvasHistory.pop();
+  const img = new Image();
+  img.onload = () => { canvasCtx.clearRect(0,0,9999,9999); canvasCtx.drawImage(img,0,0); };
+  img.src = state.canvasHistory[state.canvasHistory.length - 1];
+}
+function clearCanvas() {
+  if (state.canvasHistory.length <= 1) return;
+  const img = new Image();
+  img.onload = () => { canvasCtx.clearRect(0,0,9999,9999); canvasCtx.drawImage(img,0,0); };
+  img.src = state.canvasHistory[0];
+  state.canvasHistory = [state.canvasHistory[0]];
+}
+function confirmCanvas() {
+  const canvas  = document.getElementById('canvas-foto');
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+  const n = state.fotoMarcandoIdx;
+  if (n === 1) { state.foto1Marcada = dataUrl; state.foto1 = dataUrl; mostrarFotoEnSlot(1, dataUrl); }
+  else         { state.foto2Marcada = dataUrl; state.foto2 = dataUrl; mostrarFotoEnSlot(2, dataUrl); }
+  document.getElementById('canvas-foto-section').style.display = 'none';
+  // Scroll de vuelta al formulario
+  document.getElementById('slot-foto1').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
 
-  const rutas       = sheetToObjects(getSheet('Rutas'));
-  const insp        = sheetToObjects(getSheet('Inspecciones'));
-  const inspectores = sheetToObjects(getSheet('Inspectores'));
+// ── Plano ──
+let planoCtx = null;
+let planoImg = null;
+let planoPunto = null;
 
-  // Filtrar rutas del tipo correcto
-  const rutasTipo = rutas
-    .filter(r => r.TipoRuta === tipoRuta)
-    .sort((a, b) => new Date(b.FechaInicio) - new Date(a.FechaInicio));
+function cargarPlano() {
+  const p = state.puntoActual;
+  // Buscar código de plano en la plantilla
+  const plantPunto = state.plantilla.find(x =>
+    x.Area === p.Area && x.Sector === p.Sector && x.Subsector === p.Subsector && x.Punto === p.Punto
+  );
+  const codPlano = plantPunto?.CodigoPlano || '';
+  const planoUrl = PLANOS_BASE + (codPlano || 'default') + '.jpg';
 
-  // Para cada ruta ver si tiene registros en ese subsector
-  const historial = [];
-  for (const ruta of rutasTipo) {
-    const tieneRegistros = insp.some(i =>
-      i.IDRuta === ruta.IDRuta &&
-      i.Area === area &&
-      i.Sector === sector &&
-      i.Subsector === subsector &&
-      i.Punto !== '✓ SECTOR CERRADO'
-    );
-    if (!tieneRegistros) continue;
+  document.getElementById('plano-placeholder').style.display = 'block';
+  document.getElementById('plano-placeholder').innerHTML = `<div class="plano-icon">🗺️</div><p>Cargando plano...</p>`;
+  document.getElementById('plano-container').style.display  = 'none';
+  document.getElementById('plano-hint').style.display       = 'none';
+  // Mostrar nombre del sector encima del plano
+  const planoLabel = document.getElementById('plano-sector-label');
+  if (planoLabel) planoLabel.textContent = p.Subsector + ' — ' + p.Sector;
+  state.planoMarcadoOk = false;
+  planoPunto = null;
 
-    // Buscar si tiene sector cerrado
-    const sectorCerrado = insp.find(i =>
-      i.IDRuta === ruta.IDRuta &&
-      i.Area === area &&
-      i.Sector === sector &&
-      i.Subsector === subsector &&
-      i.Punto === '✓ SECTOR CERRADO'
-    );
+  const img = new Image();
+  img.onload = () => {
+    planoImg = img;
+    const canvas = document.getElementById('canvas-plano');
+    canvas.width  = img.width;
+    canvas.height = img.height;
+    planoCtx = canvas.getContext('2d');
+    planoCtx.drawImage(img, 0, 0);
+    document.getElementById('plano-placeholder').style.display = 'none';
+    document.getElementById('plano-container').style.display  = 'block';
+    document.getElementById('plano-hint').style.display       = 'block';
+    setupPlanoEvents(canvas);
+  };
+  img.onerror = () => {
+    document.getElementById('plano-placeholder').innerHTML = `
+      <div class="plano-icon">🗺️</div>
+      <p>Plano no encontrado.<br>Subí la imagen <b>${codPlano || 'default'}.jpg</b> a la carpeta /planos/</p>
+    `;
+  };
+  img.src = planoUrl;
+}
 
-    // Contar NCs
-    const ncs = insp.filter(i =>
-      i.IDRuta === ruta.IDRuta &&
-      i.Area === area &&
-      i.Sector === sector &&
-      i.Subsector === subsector &&
-      i.Estado === 'nc'
-    ).reduce((acc, i) => acc + (Number(i.CantNC) || 0), 0);
+function setupPlanoEvents(canvas) {
+  // Remover listeners previos clonando el canvas
+  const newCanvas = canvas.cloneNode(true);
+  canvas.parentNode.replaceChild(newCanvas, canvas);
+  // Reasignar ctx al nuevo canvas
+  planoCtx = newCanvas.getContext('2d');
+  planoCtx.drawImage(planoImg, 0, 0);
 
-    // Inspector
-    const inspObj = inspectores.find(i => i.Legajo.toString() === (ruta.Legajo || '').toString());
-    const nombreInspector = inspObj ? inspObj.Nombre : ruta.Legajo || '';
+  const handler = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const clientE = e.touches ? e.touches[0] : e;
+    const rect = newCanvas.getBoundingClientRect();
+    const scaleX = newCanvas.width  / rect.width;
+    const scaleY = newCanvas.height / rect.height;
+    const x = (clientE.clientX - rect.left) * scaleX;
+    const y = (clientE.clientY - rect.top)  * scaleY;
+    planoPunto = { x, y };
+    // Redibujar plano + punto
+    planoCtx.clearRect(0, 0, newCanvas.width, newCanvas.height);
+    planoCtx.drawImage(planoImg, 0, 0);
+    const r = Math.max(16, newCanvas.width / 35);
+    planoCtx.beginPath();
+    planoCtx.arc(x, y, r, 0, Math.PI * 2);
+    planoCtx.fillStyle = 'rgba(255,0,0,0.85)';
+    planoCtx.fill();
+    planoCtx.strokeStyle = '#fff';
+    planoCtx.lineWidth = Math.max(2, r / 4);
+    planoCtx.stroke();
+    state.planoMarcadoOk = true;
+    state.planoMarcado   = newCanvas.toDataURL('image/jpeg', 0.85);
+    state.planoUrl = null; // resetear URL al redibujar
+    // Mostrar botón identificar lugar
+    const btnWrapper = document.getElementById('btn-identificar-wrapper');
+    const btnId = document.getElementById('btn-identificar');
+    const statusId = document.getElementById('plano-status');
+    if (btnWrapper) {
+      btnWrapper.style.display = 'block';
+      btnId.textContent = '📍 Identificar lugar';
+      btnId.style.background = 'var(--accent2)';
+      btnId.disabled = false;
+      statusId.textContent = 'Punto marcado — tocá "Identificar lugar" para guardar';
+      statusId.style.color = 'var(--muted)';
+    }
+    checkValidation();
+  };
 
-    historial.push({
-      idRuta:    ruta.IDRuta,
-      estado:    sectorCerrado ? 'cerrada' : ruta.Estado,
-      fecha:     sectorCerrado ? normFecha(sectorCerrado.FechaHora) : normFecha(ruta.FechaInicio),
-      inspector: nombreInspector,
-      cantNC:    ncs
+  newCanvas.addEventListener('touchstart', handler, { passive: false });
+  newCanvas.addEventListener('click',      handler);
+}
+
+// ── Validación ──
+function checkValidation() {
+  if (state.modoManual) { checkValidationManual(); return; }
+  const fotoOk  = !!(state.foto1Url || state.foto2Url);
+  const obsOk   = document.getElementById('nc-obs').value.trim().length > 3;
+  const planoOk = !!(state.planoUrl);
+
+  setVal('foto',  fotoOk);
+  setVal('obs',   obsOk);
+  setVal('plano', planoOk);
+
+  document.getElementById('btn-guardar-nc').disabled = !(fotoOk && obsOk && planoOk);
+}
+function setVal(key, ok) {
+  document.getElementById('val-' + key).classList.toggle('ok', ok);
+  const lbl = document.getElementById('val-' + key + '-label');
+  lbl.classList.toggle('ok', ok);
+}
+
+// ── Guardar NC ──
+async function guardarNC() {
+  const p   = state.puntoActual;
+  const obs = document.getElementById('nc-obs').value.trim();
+  const btn = document.getElementById('btn-guardar-nc');
+  btn.disabled = true;
+  btn.textContent = 'Guardando...';
+  showToast('Guardando...', 'load', 0);
+
+  try {
+    const foto1Url = state.foto1Url || '';
+    const foto2Url = state.foto2Url || '';
+    const planoUrl = state.planoUrl || '';
+
+    // Armar NCs existentes + nueva
+    const ncsPrevias = [];
+    if (p.estado === 'nc' && p.cantNC > 0) {
+      for (let i = 1; i <= p.cantNC; i++) {
+        ncsPrevias.push({
+          obs:   p['NC'+i+'_Obs']   || '',
+          foto1: p['NC'+i+'_Foto1'] || '',
+          foto2: p['NC'+i+'_Foto2'] || '',
+          plano: p['NC'+i+'_Plano'] || ''
+        });
+      }
+    }
+    ncsPrevias.push({ obs, foto1: foto1Url, foto2: foto2Url, plano: planoUrl });
+
+    const r = await api('guardarNC', {
+      idRuta:    state.rutaActiva.idRuta,
+      area:      p.Area,
+      sector:    p.Sector,
+      subsector: p.Subsector,
+      punto:     p.Punto,
+      orden:     p.Orden,
+      legajo:    state.inspector.Legajo,
+      ncs:       ncsPrevias
     });
 
-    if (historial.length >= 3) break;
+    if (!r.ok) { showToast(r.error || 'Error al guardar', 'err'); btn.disabled=false; btn.textContent='Guardar NC'; return; }
+
+    showToast('✓ No conformidad guardada', 'ok');
+
+    // Actualizar estado local
+    const nuevaCantNC = ncsPrevias.length;
+    const extras = {};
+    ncsPrevias.forEach((nc, i) => {
+      extras['NC'+(i+1)+'_Obs']   = nc.obs;
+      extras['NC'+(i+1)+'_Foto1'] = nc.foto1;
+      extras['NC'+(i+1)+'_Foto2'] = nc.foto2;
+      extras['NC'+(i+1)+'_Plano'] = nc.plano;
+    });
+    actualizarAvanceLocal(p.Area, p.Sector, p.Subsector, p.Punto, 'nc', nuevaCantNC, extras);
+    state.puntoActual = { ...state.puntoActual, estado: 'nc', cantNC: nuevaCantNC, ...extras };
+
+    // Volver a la lista de puntos
+    setTimeout(() => { goPunto(); }, 800);
+  } catch(e) {
+    showToast('Error al guardar: ' + e.message, 'err');
+    btn.disabled=false; btn.textContent='Guardar no conformidad';
   }
-
-  return { ok: true, data: historial };
 }
 
-// ============================================================
-// ÚLTIMAS RUTAS POR TIPO (para pantalla de inicio)
-// ============================================================
-function getUltimasRutas(tipoRuta) {
-  const rutas = sheetToObjects(getSheet('Rutas'))
-    .filter(r => r.TipoRuta === tipoRuta)
-    .sort((a, b) => new Date(b.FechaInicio) - new Date(a.FechaInicio));
-
-  return { ok: true, data: rutas.slice(0, 10) };
+async function subirFotoAPI(dataUrl, nombre) {
+  const base64 = dataUrl.split(',')[1];
+  const mimeType = dataUrl.split(';')[0].split(':')[1];
+  const r = await api('subirFoto', { base64, nombre, mimeType });
+  if (!r.ok) throw new Error('Error al subir foto: ' + (r.error || ''));
+  return r.data.url;
 }
+
+// ── Nueva NC en el mismo punto ──
+function nuevaNCEnPunto() {
+  document.getElementById('btn-guardar-nc').style.display = 'block';
+  document.getElementById('btn-guardar-nc').disabled = true;
+  document.getElementById('btn-guardar-nc').textContent = 'Guardar NC';
+  document.getElementById('panel-post-nc').style.display = 'none';
+  // Reset formulario completo incluyendo URLs
+  state.foto1 = null; state.foto1DataUrl = null; state.foto1Marcada = null; state.foto1Url = null;
+  state.foto2 = null; state.foto2DataUrl = null; state.foto2Marcada = null; state.foto2Url = null;
+  state.planoMarcado = null; state.planoMarcadoOk = false; state.planoUrl = null;
+  document.getElementById('nc-obs').value = '';
+  document.getElementById('canvas-foto-section').style.display = 'none';
+  document.getElementById('btn-subir-fotos-wrapper').style.display = 'none';
+  document.getElementById('fotos-status').textContent = '';
+  document.getElementById('btn-identificar-wrapper').style.display = 'none';
+  document.getElementById('plano-status').textContent = '';
+  const btnSubir = document.getElementById('btn-subir-fotos');
+  if (btnSubir) { btnSubir.textContent = '↑ Subir foto(s)'; btnSubir.style.background = 'var(--accent2)'; btnSubir.disabled = false; }
+  const btnId = document.getElementById('btn-identificar');
+  if (btnId) { btnId.textContent = '📍 Identificar lugar'; btnId.style.background = 'var(--accent2)'; btnId.disabled = false; }
+  resetSlot(1); resetSlot(2);
+  cargarPlano();
+  if (state.modoManual) checkValidationManual();
+  else checkValidation();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ── Pasar al siguiente punto ──
+function siguientePuntoDesdeNC() {
+  document.getElementById('btn-guardar-nc').style.display = 'block';
+  document.getElementById('panel-post-nc').style.display = 'none';
+  const p = state.puntoActual;
+  const siguiente = getSiguientePendiente(p);
+  if (siguiente) {
+    openPunto(siguiente.Area, siguiente.Sector, siguiente.Subsector, siguiente.Punto, siguiente.Orden);
+  } else {
+    goPuntos();
+    renderPuntos();
+  }
+}
+
+// ── Siguiente punto pendiente ──
+function getSiguientePendiente(puntoActual) {
+  // Buscar en el mismo subsector primero, luego en el mismo sector
+  const enSector = state.avance.filter(p =>
+    p.Area === puntoActual.Area && p.Sector === puntoActual.Sector && p.estado === 'pendiente'
+  ).sort((a,b) => Number(a.Orden) - Number(b.Orden));
+  if (enSector.length > 0) return enSector[0];
+  return null;
+}
+
+// ── Actualizar avance local sin recargar ──
+function actualizarAvanceLocal(area, sector, subsector, punto, estado, cantNC, extras) {
+  const idx = state.avance.findIndex(x =>
+    x.Area === area && x.Sector === sector && x.Subsector === subsector && x.Punto === punto
+  );
+  if (idx >= 0) {
+    state.avance[idx] = { ...state.avance[idx], estado, cantNC, ...extras };
+  } else {
+    state.avance.push({ Area: area, Sector: sector, Subsector: subsector, Punto: punto, estado, cantNC, ...extras });
+  }
+}
+
+// ── Event listener delegado para NC rows ──
+document.addEventListener('click', function(e) {
+  const row = e.target.closest('.nc-row-item');
+  if (!row) return;
+  const area      = row.dataset.area;
+  const sector    = row.dataset.sector;
+  const subsector = row.dataset.subsector;
+  const punto     = row.dataset.punto;
+  const ncIdx     = parseInt(row.dataset.ncidx);
+  verNC(area, sector, subsector, punto, ncIdx);
+});
+
+// ══════════════════════════════════════════════════════
+// VER NC DETALLE
+// ══════════════════════════════════════════════════════
+let verNCState = { punto: null, ncIdx: 0 };
+
+function verNC(area, sector, subsector, punto, ncIdx) {
+  const p = state.avance.find(x =>
+    x.Area === area && x.Sector === sector && x.Subsector === subsector && x.Punto === punto
+  );
+  if (!p) return;
+  verNCState = { punto: p, ncIdx };
+
+  document.getElementById('ver-nc-title').textContent = `NC #${ncIdx} — ${punto}`;
+
+  // Fotos
+  const foto1 = p['NC'+ncIdx+'_Foto1'] || '';
+  const foto2 = p['NC'+ncIdx+'_Foto2'] || '';
+  const plano = p['NC'+ncIdx+'_Plano'] || '';
+  const fotosDiv = document.getElementById('ver-nc-fotos');
+  fotosDiv.innerHTML = [
+    foto1 ? `<div style="flex:1;min-width:0;"><div style="font-size:10px;color:var(--muted);margin-bottom:4px;font-family:'DM Mono',monospace;">FOTO 1</div><img src="${foto1}" style="width:100%;border-radius:8px;border:1px solid var(--border);" onclick="window.open('${foto1}','_blank')"></div>` : '',
+    foto2 ? `<div style="flex:1;min-width:0;"><div style="font-size:10px;color:var(--muted);margin-bottom:4px;font-family:'DM Mono',monospace;">FOTO 2</div><img src="${foto2}" style="width:100%;border-radius:8px;border:1px solid var(--border);" onclick="window.open('${foto2}','_blank')"></div>` : '',
+    plano ? `<div style="width:100%;"><div style="font-size:10px;color:var(--accent2);margin-bottom:4px;font-family:'DM Mono',monospace;">PLANO</div><img src="${plano}" style="width:100%;border-radius:8px;border:1px solid var(--accent2);" onclick="window.open('${plano}','_blank')"></div>` : ''
+  ].join('');
+
+  // Observación
+  const obs = p['NC'+ncIdx+'_Obs'] || '';
+  document.getElementById('ver-nc-obs-texto').textContent = obs || 'Sin observación';
+  document.getElementById('ver-nc-edit-section').style.display = 'none';
+
+  // Ocultar botón editar si el sector está cerrado
+  const cerrado = !!(state.sectoresCerrados?.[area+'|'+sector+'|'+subsector]);
+  document.getElementById('ver-nc-btn-editar').style.display = cerrado ? 'none' : 'block';
+
+  document.getElementById('modal-ver-nc').style.display = 'flex';
+}
+
+function cerrarVerNC() {
+  document.getElementById('modal-ver-nc').style.display = 'none';
+}
+
+function activarEditVerNC() {
+  const p = verNCState.punto;
+  const obs = p['NC'+verNCState.ncIdx+'_Obs'] || '';
+  document.getElementById('ver-nc-obs-input').value = obs;
+  document.getElementById('ver-nc-edit-section').style.display = 'block';
+  document.getElementById('ver-nc-btn-editar').style.display = 'none';
+  document.getElementById('ver-nc-obs-input').focus();
+}
+
+function cancelarEditVerNC() {
+  document.getElementById('ver-nc-edit-section').style.display = 'none';
+  document.getElementById('ver-nc-btn-editar').style.display = 'block';
+}
+
+async function guardarEditVerNC() {
+  const p = verNCState.punto;
+  const ncIdx = verNCState.ncIdx;
+  const nuevaObs = document.getElementById('ver-nc-obs-input').value.trim();
+  showToast('Guardando...', 'load', 0);
+  try {
+    const r = await api('editarObservacion', {
+      idRuta:    state.rutaActiva.idRuta,
+      area:      p.Area,
+      sector:    p.Sector,
+      subsector: p.Subsector,
+      punto:     p.Punto,
+      nroNC:     ncIdx,
+      nuevaObs
+    });
+    if (!r.ok) { showToast(r.error || 'Error', 'err'); return; }
+    showToast('✓ Observación actualizada', 'ok');
+    // Actualizar estado local
+    p['NC'+ncIdx+'_Obs'] = nuevaObs;
+    actualizarAvanceLocal(p.Area, p.Sector, p.Subsector, p.Punto, p.estado, p.cantNC, { ['NC'+ncIdx+'_Obs']: nuevaObs });
+    document.getElementById('ver-nc-obs-texto').textContent = nuevaObs || 'Sin observación';
+    cancelarEditVerNC();
+    renderPuntos();
+  } catch(e) { showToast('Error de conexión', 'err'); }
+}
+
+// ══════════════════════════════════════════════════════
+// EDITAR OBSERVACIÓN (modal viejo — se mantiene por compatibilidad)
+function openEditObs(ncIdx) {
+  const p = state.puntoActual;
+  state.editingNCidx = ncIdx;
+  document.getElementById('modal-edit-title').textContent = 'Editar observación — NC #' + ncIdx;
+  document.getElementById('modal-obs-input').value = p['NC'+ncIdx+'_Obs'] || '';
+  document.getElementById('modal-edit-obs').style.display = 'flex';
+}
+function closeEditModal() {
+  document.getElementById('modal-edit-obs').style.display = 'none';
+}
+async function saveEditObs() {
+  const p      = state.puntoActual;
+  const nuevaObs = document.getElementById('modal-obs-input').value.trim();
+  const ncIdx  = state.editingNCidx;
+  closeEditModal();
+  showToast('Guardando...', 'load', 0);
+  try {
+    const r = await api('editarObservacion', {
+      idRuta:    state.rutaActiva.idRuta,
+      area:      p.Area,
+      sector:    p.Sector,
+      subsector: p.Subsector,
+      punto:     p.Punto,
+      nroNC:     ncIdx,
+      nuevaObs
+    });
+    if (!r.ok) { showToast(r.error || 'Error', 'err'); return; }
+    showToast('✓ Observación actualizada', 'ok');
+    state.puntoActual['NC'+ncIdx+'_Obs'] = nuevaObs;
+    actualizarAvanceLocal(p.Area, p.Sector, p.Subsector, p.Punto, p.estado, p.cantNC, { ['NC'+ncIdx+'_Obs']: nuevaObs });
+    renderPuntoDetalle();
+  } catch(e) { showToast('Error de conexión', 'err'); }
+}
+
+// ══════════════════════════════════════════════════════
+// CERRAR RUTA
+// ══════════════════════════════════════════════════════
+async function cerrarRuta() {
+  // Resumen antes de cerrar
+  const total      = state.avance.length;
+  const conformes  = state.avance.filter(p => p.estado === 'conforme').length;
+  const conNC      = state.avance.filter(p => p.estado === 'nc').length;
+  const pendientes = state.avance.filter(p => p.estado === 'pendiente').length;
+  const msg = `Resumen de la ruta:\n\n✓ Conformes: ${conformes}\n⚠ Con no conformidades: ${conNC}\n○ Pendientes: ${pendientes}\n\n¿Cerrar y finalizar la ruta?`;
+  if (!confirm(msg)) return;
+  showToast('Cerrando ruta...', 'load', 0);
+  try {
+    const r = await api('cerrarRuta', { idRuta: state.rutaActiva.idRuta });
+    if (!r.ok) { showToast(r.error || 'Error', 'err'); return; }
+    showToast('✓ Ruta cerrada correctamente', 'ok');
+    state.rutaActiva = null;
+    await loadHome();
+  } catch(e) { showToast('Error de conexión', 'err'); }
+}
+
+async function refrescarRuta() {
+  if (!state.rutaActiva) return;
+  showToast('Actualizando...', 'load', 0);
+  try {
+    const avR = await api('getAvance', { idRuta: state.rutaActiva.idRuta });
+    hideToast();
+    state.avance = avR.data?.puntos || [];
+    // Actualizar sectores cerrados
+    state.sectoresCerrados = {};
+    (avR.data?.sectorsCerrados || []).forEach(sc => {
+      const key = sc.Area + '|' + sc.Sector + '|' + sc.Subsector;
+      state.sectoresCerrados[key] = sc.FechaHora || 'cerrado';
+    });
+    renderRutaContent();
+    showToast('✓ Actualizado', 'ok');
+  } catch(e) { showToast('Error al actualizar', 'err'); }
+}
+
+// ══════════════════════════════════════════════════════
+// COMPRESIÓN DE IMAGEN
+// ══════════════════════════════════════════════════════
+function comprimirImagen(file, quality, maxWidth, callback) {
+  const reader = new FileReader();
+  reader.onload = e => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      let w = img.width, h = img.height;
+      if (w > maxWidth) { h = h * maxWidth / w; w = maxWidth; }
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      callback(canvas.toDataURL('image/jpeg', quality));
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+</script>
+</body>
+</html>
