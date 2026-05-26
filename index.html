@@ -972,20 +972,20 @@ function renderSubsectores() {
     const total    = plantSub.length;
     const marcados = puntosSub.filter(p => p.estado !== 'pendiente').length;
     const conNC    = puntosSub.filter(p => p.estado === 'nc').length;
-    const cerrado  = state.sectoresCerrados?.[area+'|'+sector+'|'+sub] ||
-      state.avance.find(p =>
-        p.Area === area && p.Sector === sector && p.Subsector === sub &&
-        p.Punto === '✓ SECTOR CERRADO'
-      )?.fechaHora || null;
+    const cerradoEnState = state.sectoresCerrados?.[area+'|'+sector+'|'+sub];
+    const cerradoEnAvance = state.avance.find(p =>
+      p.Area === area && p.Sector === sector && p.Subsector === sub &&
+      (p.Punto === '✓ SECTOR CERRADO' || p.Punto === 'SECTOR CERRADO')
+    );
+    const cerrado = cerradoEnState || (cerradoEnAvance ? (cerradoEnAvance.fechaHora || 'cerrado') : null);
+    const esCerrado = !!(cerrado);
 
     // Última inspección
     const ultima = state.ultimaPorSubsector?.[area+'|'+sector+'|'+sub];
 
     const pct = total > 0 ? Math.round(marcados / total * 100) : 0;
-    const chipCls = cerrado ? 'done' : pct === 100 ? 'done' : pct > 0 ? 'partial' : '';
-    const chipLabel = cerrado ? '✓ Cerrado' : pct + '%';
-
-    const esCerrado = !!(cerrado) || chipLabel === '✓ Cerrado';
+    const chipCls = esCerrado ? 'done' : pct === 100 ? 'done' : pct > 0 ? 'partial' : '';
+    const chipLabel = esCerrado ? '✓ Cerrado' : pct + '%';
 
     return `
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:10px;overflow:hidden;">
