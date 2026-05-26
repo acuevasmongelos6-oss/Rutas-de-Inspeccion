@@ -1133,24 +1133,39 @@ function renderPuntos() {
 }
 
 // ── Nueva inspección en subsector cerrado ──
-function nuevaInspeccionSubsector(area, sector, subsector) {
+async function nuevaInspeccionSubsector(area, sector, subsector) {
   const msg = `Iniciar nueva inspección en:\n${subsector} — ${sector}\n\nLa inspección anterior queda archivada.\n¿Confirmar?`;
   if (!confirm(msg)) return;
 
-  // Resetear puntos del subsector en el estado local
-  state.avance = state.avance.map(p => {
-    if (p.Area === area && p.Sector === sector && p.Subsector === subsector) {
-      return { ...p, estado: 'pendiente', cantNC: 0 };
-    }
-    return p;
-  });
+  showToast('Iniciando nueva inspección...', 'load', 0);
+  try {
+    // Si la ruta actual está completada, crear una nueva
+    const r = await api('iniciarRuta', {
+      legajo:   state.inspector.Legajo,
+      tipoRuta: state.tipoRutaSeleccionada
+    });
 
-  // Quitar el cierre local
-  const key = area + '|' + sector + '|' + subsector;
-  if (state.sectoresCerrados) delete state.sectoresCerrados[key];
+    if (!r.ok) { showToast(r.error || 'Error al iniciar', 'err'); return; }
 
-  showToast('Nueva inspección iniciada', 'ok');
-  renderPuntos();
+    // Actualizar IDRuta activa
+    state.rutaActiva = { tipoRuta: state.tipoRutaSeleccionada, idRuta: r.data.idRuta };
+
+    // Resetear puntos del subsector en el estado local
+    state.avance = state.avance.map(p => {
+      if (p.Area === area && p.Sector === sector && p.Subsector === subsector) {
+        return { ...p, estado: 'pendiente', cantNC: 0 };
+      }
+      return p;
+    });
+
+    // Quitar el cierre local
+    const key = area + '|' + sector + '|' + subsector;
+    if (state.sectoresCerrados) delete state.sectoresCerrados[key];
+
+    hideToast();
+    showToast('✓ Nueva inspección iniciada', 'ok');
+    renderPuntos();
+  } catch(e) { showToast('Error de conexión', 'err'); }
 }
 
 // ══════════════════════════════════════════════════════
