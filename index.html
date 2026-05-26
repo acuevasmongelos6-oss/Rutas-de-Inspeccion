@@ -995,18 +995,6 @@ async function openSubsector(area, sector, subsector) {
   document.getElementById('puntos-sub').textContent = sector + ' · ' + area;
   showScreen('screen-puntos');
   renderPuntos();
-
-  // Refrescar desde Sheets en background para tener estado actualizado
-  try {
-    const avR = await api('getAvance', { idRuta: state.rutaActiva.idRuta });
-    state.avance = avR.data?.puntos || [];
-    state.sectoresCerrados = {};
-    (avR.data?.sectorsCerrados || []).forEach(sc => {
-      const key = sc.Area + '|' + sc.Sector + '|' + sc.Subsector;
-      state.sectoresCerrados[key] = sc.FechaHora || 'cerrado';
-    });
-    renderPuntos();
-  } catch(e) { /* silencioso */ }
 }
 
 function renderPuntos() {
@@ -1168,7 +1156,6 @@ async function nuevaInspeccionSubsector(area, sector, subsector) {
     if (r.ok) {
       idRuta = r.data.idRuta;
     } else if (r.idRuta) {
-      // Ya hay una ruta en curso — usarla
       idRuta = r.idRuta;
     } else {
       showToast(r.error || 'Error al iniciar', 'err');
@@ -1178,20 +1165,24 @@ async function nuevaInspeccionSubsector(area, sector, subsector) {
     // Actualizar IDRuta activa
     state.rutaActiva = { tipoRuta: state.tipoRutaSeleccionada, idRuta };
 
-    // Resetear puntos del subsector en el estado local
-    state.avance = state.avance.map(p => {
-      if (p.Area === area && p.Sector === sector && p.Subsector === subsector) {
-        return { ...p, estado: 'pendiente', cantNC: 0 };
-      }
-      return p;
-    });
-
-    // Quitar el cierre local
-    const key = area + '|' + sector + '|' + subsector;
-    if (state.sectoresCerrados) delete state.sectoresCerrados[key];
+    // Recargar plantilla y avance con el nuevo idRuta — pizarra limpia
+    const [plantR, avR] = await Promise.all([
+      api('getPlantilla', { ruta: state.tipoRutaSeleccionada }),
+      api('getAvance', { idRuta })
+    ]);
+    state.plantilla = plantR.data || [];
+    state.avance    = avR.data?.puntos || [];
+    state.sectoresCerrados = {};
+    // La nueva ruta no tiene cierres — sectoresCerrados queda vacío
 
     hideToast();
     showToast('✓ Nueva inspección iniciada', 'ok');
+
+    // Ir directo al subsector
+    state.sectorActual = { area, sector, subsector };
+    document.getElementById('puntos-title').textContent = subsector;
+    document.getElementById('puntos-sub').textContent = sector + ' · ' + area;
+    showScreen('screen-puntos');
     renderPuntos();
   } catch(e) { showToast('Error de conexión', 'err'); }
 }
