@@ -1748,8 +1748,11 @@ function abrirFormNC() {
   document.getElementById('fotos-status').textContent = '';
   document.getElementById('btn-identificar-wrapper').style.display = 'none';
   document.getElementById('plano-status').textContent = '';
-
-  // Ocultar aclaración manual
+  // Resetear estado visual de botones
+  const btnSubirReset = document.getElementById('btn-subir-fotos');
+  if (btnSubirReset) { btnSubirReset.textContent = '↑ Subir foto(s)'; btnSubirReset.style.background = 'var(--accent2)'; btnSubirReset.disabled = false; }
+  const btnIdReset = document.getElementById('btn-identificar');
+  if (btnIdReset) { btnIdReset.textContent = '📍 Identificar lugar'; btnIdReset.style.background = 'var(--accent2)'; btnIdReset.disabled = false; }
   const aclaracion = document.getElementById('nc-manual-aclaracion');
   if (aclaracion) aclaracion.style.display = 'none';
 
