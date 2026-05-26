@@ -271,7 +271,12 @@
 <div id="screen-home" class="screen">
   <div class="home-header">
     <div class="greeting">Bienvenido,</div>
-    <div class="name" id="home-name">—</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;">
+      <div class="name" id="home-name">—</div>
+      <button id="btn-admin" onclick="abrirAdmin()" style="display:none;background:var(--surface2);border:1px solid var(--border);color:var(--muted);border-radius:10px;padding:8px 14px;font-size:12px;font-weight:600;font-family:'Syne',sans-serif;cursor:pointer;">
+        ⚙ Admin
+      </button>
+    </div>
   </div>
   <div class="routes-grid" id="routes-grid">
     <!-- cards generadas dinámicamente -->
@@ -295,6 +300,30 @@
   <div class="cerrar-ruta-section" id="cerrar-ruta-section" style="display:none;">
     <button class="btn-cerrar-ruta" onclick="cerrarRuta()">✓ Cerrar y finalizar ruta</button>
   </div>
+</div>
+
+<!-- ══════════════════ ADMIN ══════════════════ -->
+<div id="screen-admin" class="screen">
+  <div class="header">
+    <button class="back-btn" onclick="goHome()">←</button>
+    <div style="flex:1;">
+      <div class="header h1">Administración</div>
+      <div class="sub" id="admin-sub"></div>
+    </div>
+  </div>
+  <div id="admin-content" style="padding:16px;"></div>
+</div>
+
+<!-- ══════════════════ ADMIN RUTAS ══════════════════ -->
+<div id="screen-admin-rutas" class="screen">
+  <div class="header">
+    <button class="back-btn" onclick="showScreen('screen-admin')">←</button>
+    <div style="flex:1;">
+      <div class="header h1" id="admin-rutas-title">Rutas</div>
+      <div class="sub" id="admin-rutas-sub"></div>
+    </div>
+  </div>
+  <div id="admin-rutas-content" style="padding:16px;padding-bottom:40px;"></div>
 </div>
 
 <!-- ══════════════════ SUBSECTORES ══════════════════ -->
@@ -610,6 +639,8 @@ const SCREEN_BACK = {
   'screen-puntos':       () => goSubsectores(),
   'screen-punto':        () => goPuntos(),
   'screen-nc':           () => goPunto(),
+  'screen-admin':        () => goHome(),
+  'screen-admin-rutas':  () => showScreen('screen-admin'),
 };
 
 function showScreen(id) {
@@ -689,6 +720,9 @@ async function doLogin() {
 // ══════════════════════════════════════════════════════
 async function loadHome() {
   document.getElementById('home-name').textContent = state.inspector.Nombre;
+  // Mostrar botón admin si corresponde
+  const btnAdmin = document.getElementById('btn-admin');
+  if (btnAdmin) btnAdmin.style.display = state.inspector.Admin === 'SI' ? 'block' : 'none';
   showScreen('screen-home');
   showToast('Cargando rutas...', 'load', 0);
   try {
@@ -2385,7 +2419,139 @@ document.addEventListener('click', function(e) {
 });
 
 // ══════════════════════════════════════════════════════
-// VER NC DETALLE
+// ADMINISTRACIÓN
+// ══════════════════════════════════════════════════════
+function abrirAdmin() {
+  document.getElementById('admin-sub').textContent = state.inspector.Nombre;
+  document.getElementById('admin-content').innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:14px;">
+      <div style="font-size:13px;color:var(--muted);margin-bottom:4px;">Seleccioná el tipo de ruta a gestionar:</div>
+      <button onclick="abrirAdminRutas('EST')"
+        style="background:var(--surface);border:1px solid var(--border);color:var(--text);
+               border-radius:var(--radius);padding:20px;font-size:15px;font-weight:700;
+               font-family:'Syne',sans-serif;cursor:pointer;text-align:left;display:flex;
+               align-items:center;gap:12px;">
+        <span style="font-size:28px;">🏗️</span>
+        <div>
+          <div>Ruta Estructural</div>
+          <div style="font-size:12px;color:var(--muted);font-weight:400;">Ver y eliminar rutas EST</div>
+        </div>
+      </button>
+      <button onclick="abrirAdminRutas('MEQ')"
+        style="background:var(--surface);border:1px solid var(--border);color:var(--text);
+               border-radius:var(--radius);padding:20px;font-size:15px;font-weight:700;
+               font-family:'Syne',sans-serif;cursor:pointer;text-align:left;display:flex;
+               align-items:center;gap:12px;">
+        <span style="font-size:28px;">⚙️</span>
+        <div>
+          <div>Ruta Máquinas y Equipos</div>
+          <div style="font-size:12px;color:var(--muted);font-weight:400;">Ver y eliminar rutas MEQ</div>
+        </div>
+      </button>
+    </div>
+  `;
+  showScreen('screen-admin');
+}
+
+async function abrirAdminRutas(tipoRuta) {
+  const titulo = tipoRuta === 'EST' ? 'Ruta Estructural' : 'Ruta Máquinas y Equipos';
+  document.getElementById('admin-rutas-title').textContent = titulo;
+  document.getElementById('admin-rutas-sub').textContent = 'Gestión de rutas';
+  document.getElementById('admin-rutas-content').innerHTML = `
+    <div style="text-align:center;padding:32px;color:var(--muted);">
+      <div class="spin" style="margin:0 auto 12px;"></div>
+      Cargando rutas...
+    </div>`;
+  showScreen('screen-admin-rutas');
+
+  try {
+    const r = await api('getRutasAdmin', { tipoRuta });
+    if (!r.ok) { document.getElementById('admin-rutas-content').innerHTML = `<p style="color:var(--danger)">Error: ${r.error}</p>`; return; }
+    renderAdminRutas(r.data, tipoRuta);
+  } catch(e) {
+    document.getElementById('admin-rutas-content').innerHTML = `<p style="color:var(--danger)">Error de conexión</p>`;
+  }
+}
+
+function renderAdminRutas(rutas, tipoRuta) {
+  if (!rutas.length) {
+    document.getElementById('admin-rutas-content').innerHTML = `
+      <div class="empty-state"><div class="empty-icon">📋</div><p>No hay rutas guardadas.</p></div>`;
+    return;
+  }
+
+  const html = rutas.map(ruta => {
+    const estadoColor = ruta.estado === 'completada' ? 'var(--accent)' : 'var(--accent2)';
+    const estadoLabel = ruta.estado === 'completada' ? 'Cerrada' : 'En curso';
+    const fechaLabel  = ruta.estado === 'completada'
+      ? `${ruta.fechaInicio} → ${ruta.fechaFin}`
+      : `Inicio: ${ruta.fechaInicio}`;
+
+    // Subsectores con puntos
+    const subsHtml = ruta.subsectores.map(sub => {
+      const puntosHtml = sub.puntos.map(p => {
+        const color = p.estado === 'conforme' ? 'var(--accent)' : p.estado === 'nc' ? 'var(--danger)' : 'var(--muted)';
+        const label = p.estado === 'conforme' ? 'C' : p.estado === 'nc' ? `NC(${p.cantNC})` : '○';
+        // Observaciones de NCs
+        const obsHtml = p.estado === 'nc' ? Array.from({length: p.cantNC}, (_,i) => {
+          const obs = p[`nc${i+1}obs`] || '';
+          return obs ? `<div style="font-size:10px;color:var(--muted);padding-left:16px;font-family:'DM Mono',monospace;">→ ${obs}</div>` : '';
+        }).join('') : '';
+        return `
+          <div style="padding:3px 0;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <span style="color:${color};font-size:11px;font-weight:700;font-family:'DM Mono',monospace;min-width:40px;">${label}</span>
+              <span style="font-size:12px;color:var(--text);">${p.punto}</span>
+            </div>
+            ${obsHtml}
+          </div>`;
+      }).join('');
+
+      return `
+        <div style="margin:6px 0;padding:8px 12px;background:var(--surface2);border-radius:8px;border:1px solid var(--border);">
+          <div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:4px;font-family:'DM Mono',monospace;">
+            ${sub.area} › ${sub.sector} › ${sub.subsector}
+          </div>
+          ${puntosHtml}
+        </div>`;
+    }).join('');
+
+    return `
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:14px;overflow:hidden;">
+        <div style="padding:14px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+            <span style="font-size:11px;font-family:'DM Mono',monospace;color:${estadoColor};font-weight:700;">● ${estadoLabel}</span>
+            ${ruta.totalNC > 0 ? `<span style="font-size:11px;color:var(--danger);font-family:'DM Mono',monospace;">${ruta.totalNC} NC</span>` : ''}
+          </div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:2px;font-family:'DM Mono',monospace;">${fechaLabel}</div>
+          <div style="font-size:12px;color:var(--muted);">Inspector: ${ruta.inspector}</div>
+          <div style="font-size:10px;color:var(--border);font-family:'DM Mono',monospace;margin-top:2px;">${ruta.idRuta}</div>
+        </div>
+        ${subsHtml ? `<div style="padding:0 14px 8px;">${subsHtml}</div>` : ''}
+        <div style="padding:10px 14px;border-top:1px solid var(--border);">
+          <button onclick="confirmarEliminarRuta('${ruta.idRuta}','${tipoRuta}')"
+            style="width:100%;background:rgba(255,71,87,.1);border:1px solid var(--danger);color:var(--danger);
+                   border-radius:8px;padding:10px;font-size:13px;font-weight:700;
+                   font-family:'Syne',sans-serif;cursor:pointer;">
+            🗑 Eliminar esta ruta
+          </button>
+        </div>
+      </div>`;
+  }).join('');
+
+  document.getElementById('admin-rutas-content').innerHTML = html;
+}
+
+async function confirmarEliminarRuta(idRuta, tipoRuta) {
+  if (!confirm(`¿Eliminar la ruta ${idRuta}?\n\nEsta acción no se puede deshacer.`)) return;
+  showToast('Eliminando ruta...', 'load', 0);
+  try {
+    const r = await api('eliminarRuta', { idRuta });
+    if (!r.ok) { showToast(r.error || 'Error', 'err'); return; }
+    showToast('✓ Ruta eliminada', 'ok');
+    await abrirAdminRutas(tipoRuta);
+  } catch(e) { showToast('Error de conexión', 'err'); }
+}
 // ══════════════════════════════════════════════════════
 let verNCState = { punto: null, ncIdx: 0 };
 
