@@ -935,6 +935,18 @@ async function openSector(area, sector) {
   document.getElementById('subsectores-sub').textContent = area;
   showScreen('screen-subsectores');
   renderSubsectores();
+
+  // Refrescar sectoresCerrados desde Sheets en background
+  try {
+    const avR = await api('getAvance', { idRuta: state.rutaActiva.idRuta });
+    state.avance = avR.data?.puntos || [];
+    state.sectoresCerrados = {};
+    (avR.data?.sectorsCerrados || []).forEach(sc => {
+      const key = sc.Area + '|' + sc.Sector + '|' + sc.Subsector;
+      state.sectoresCerrados[key] = sc.FechaHora || 'cerrado';
+    });
+    renderSubsectores();
+  } catch(e) { /* silencioso */ }
 }
 
 function renderSubsectores() {
