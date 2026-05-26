@@ -957,6 +957,24 @@ async function iniciarRuta() {
   await openRuta(state.tipoRutaSeleccionada, idRuta);
 }
 
+// ── Crear SubRuta en Sheets si no existe (lazy creation) ──
+async function asegurarSubRutaEnSheets() {
+  if (state.idSubRutaActual) return true;
+  if (!state.rutaActiva?.idRuta || !state.sectorActual?.subsector) return false;
+  try {
+    const srRes = await api('iniciarSubRuta', {
+      idRuta:    state.rutaActiva.idRuta,
+      tipoRuta:  state.tipoRutaSeleccionada,
+      area:      state.sectorActual.area,
+      sector:    state.sectorActual.sector,
+      subsector: state.sectorActual.subsector,
+      legajo:    state.inspector.Legajo
+    });
+    if (srRes.ok) { state.idSubRutaActual = srRes.data.idSubRuta; return true; }
+    return false;
+  } catch(e) { return false; }
+}
+
 // ── Crear ruta en Sheets si todavía no existe (lazy creation) ──
 async function asegurarRutaEnSheets() {
   if (!state.rutaActiva?.pendienteCreacion) return true;
@@ -1142,23 +1160,11 @@ async function cargarHistorialSubsector(area, sector, subsector) {
 
 async function openSubsector(area, sector, subsector) {
   state.sectorActual = { area, sector, subsector };
+  state.idSubRutaActual = null; // resetear SubRuta al cambiar de subsector
   document.getElementById('puntos-title').textContent = subsector;
   document.getElementById('puntos-sub').textContent = sector + ' · ' + area;
   showScreen('screen-puntos');
   renderPuntos();
-
-  // Crear SubRuta en background si hay ruta activa y no es pendiente de creación
-  if (state.rutaActiva?.idRuta && !state.rutaActiva?.pendienteCreacion) {
-    try {
-      const srRes = await api('iniciarSubRuta', {
-        idRuta:   state.rutaActiva.idRuta,
-        tipoRuta: state.tipoRutaSeleccionada,
-        area, sector, subsector,
-        legajo:   state.inspector.Legajo
-      });
-      if (srRes.ok) state.idSubRutaActual = srRes.data.idSubRuta;
-    } catch(e) { /* silencioso */ }
-  }
 }
 
 function renderPuntos() {
@@ -1348,8 +1354,9 @@ async function sincronizarPunto(area, sector, subsector, punto, orden, estado) {
   actualizarIndicadorSync();
 
   try {
-    // Crear ruta en Sheets si es la primera vez
+    // Crear ruta y SubRuta en Sheets si es la primera vez
     await asegurarRutaEnSheets();
+    await asegurarSubRutaEnSheets();
 
     if (estado === 'conforme') {
       await api('marcarConforme', {
@@ -1611,9 +1618,10 @@ async function guardarCambios(silencioso = false) {
   const { area, sector, subsector } = state.sectorActual;
   const btn = document.getElementById('btn-guardar-cambios');
 
-  // Crear ruta en Sheets si es la primera vez
+  // Crear ruta y SubRuta en Sheets si es la primera vez
   const creada = await asegurarRutaEnSheets();
   if (!creada) return false;
+  await asegurarSubRutaEnSheets();
 
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Guardando...'; }
   if (!silencioso) showToast('Guardando cambios...', 'load', 0);
@@ -2319,9 +2327,10 @@ async function guardarNC() {
   btn.textContent = 'Guardando...';
   showToast('Guardando...', 'load', 0);
 
-  // Crear ruta en Sheets si es la primera vez
+  // Crear ruta y SubRuta en Sheets si es la primera vez
   const creada = await asegurarRutaEnSheets();
   if (!creada) { btn.disabled = false; btn.textContent = 'Guardar NC'; return; }
+  await asegurarSubRutaEnSheets();
 
   try {
     const foto1Url = state.foto1Url || '';
