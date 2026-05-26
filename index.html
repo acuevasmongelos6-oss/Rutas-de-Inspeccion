@@ -595,6 +595,7 @@ let state = {
   sectoresCerrados: {},  // key: area|sector|subsector → fecha/hora cierre
   ultimaPorSubsector: {}, // key: area|sector|subsector → { fecha, inspector }
   ultimaPorSubsectorGlobal: {},
+  idSubRutaActual: null,
   // canvas
   canvasHistory: [],
   isDrawing: false,
@@ -965,8 +966,21 @@ async function asegurarRutaEnSheets() {
       tipoRuta: state.tipoRutaSeleccionada
     });
     if (r.ok) {
-      // Usar el IDRuta real de Sheets
       state.rutaActiva = { tipoRuta: state.tipoRutaSeleccionada, idRuta: r.data.idRuta };
+      // Crear SubRuta para el subsector actual
+      if (state.sectorActual?.subsector) {
+        try {
+          const srRes = await api('iniciarSubRuta', {
+            idRuta:   r.data.idRuta,
+            tipoRuta: state.tipoRutaSeleccionada,
+            area:     state.sectorActual.area,
+            sector:   state.sectorActual.sector,
+            subsector: state.sectorActual.subsector,
+            legajo:   state.inspector.Legajo
+          });
+          if (srRes.ok) state.idSubRutaActual = srRes.data.idSubRuta;
+        } catch(e) {}
+      }
       return true;
     } else if (r.idRuta) {
       // Ya existe una en curso — usarla
@@ -1132,6 +1146,19 @@ async function openSubsector(area, sector, subsector) {
   document.getElementById('puntos-sub').textContent = sector + ' · ' + area;
   showScreen('screen-puntos');
   renderPuntos();
+
+  // Crear SubRuta en background si hay ruta activa y no es pendiente de creación
+  if (state.rutaActiva?.idRuta && !state.rutaActiva?.pendienteCreacion) {
+    try {
+      const srRes = await api('iniciarSubRuta', {
+        idRuta:   state.rutaActiva.idRuta,
+        tipoRuta: state.tipoRutaSeleccionada,
+        area, sector, subsector,
+        legajo:   state.inspector.Legajo
+      });
+      if (srRes.ok) state.idSubRutaActual = srRes.data.idSubRuta;
+    } catch(e) { /* silencioso */ }
+  }
 }
 
 function renderPuntos() {
@@ -1669,7 +1696,7 @@ async function cerrarSector(area, sector, subsector) {
   const conNC     = puntosSector.filter(p => p.estado === 'nc').length;
   const total     = puntosSector.length;
 
-  const msg = `Cerrar sector: ${subsector}\n\n✓ Conformes: ${conformes}\n⚠ Con NC: ${conNC}\nTotal: ${total}\n\n¿Confirmar cierre?`;
+  const msg = `Cerrar sector: ${subsector}\n\nConformes: ${conformes}\nCon NC: ${conNC}\nTotal: ${total}\n\n¿Confirmar cierre?`;
   if (!confirm(msg)) return;
 
   // Guardar cambios primero
@@ -1677,10 +1704,25 @@ async function cerrarSector(area, sector, subsector) {
   const guardado = await guardarCambios(true);
   if (!guardado) return;
 
-  // Luego cerrar el sector
   showToast('Cerrando sector...', 'load', 0);
   try {
     const ahora = new Date().toLocaleString('es-PY', { timeZone: 'America/Asuncion' });
+
+    // Crear SubRuta si no existe, o cerrarla si ya existe
+    const srRes = await api('iniciarSubRuta', {
+      idRuta:   state.rutaActiva.idRuta,
+      tipoRuta: state.tipoRutaSeleccionada,
+      area, sector, subsector,
+      legajo:   state.inspector.Legajo
+    });
+    if (!srRes.ok) { showToast('Error al registrar SubRuta', 'err'); return; }
+    const idSubRuta = srRes.data.idSubRuta;
+    state.idSubRutaActual = idSubRuta;
+
+    // Cerrar la SubRuta
+    await api('cerrarSubRuta', { idSubRuta });
+
+    // Marcar SECTOR CERRADO en Inspecciones
     const r = await api('marcarConforme', {
       idRuta:    state.rutaActiva.idRuta,
       area, sector, subsector,
@@ -1694,7 +1736,7 @@ async function cerrarSector(area, sector, subsector) {
     if (!state.sectoresCerrados) state.sectoresCerrados = {};
     state.sectoresCerrados[area + '|' + sector + '|' + subsector] = ahora;
 
-    showToast('✓ Sector cerrado', 'ok');
+    showToast('Sector cerrado', 'ok');
     setTimeout(() => { goSubsectores(); }, 800);
   } catch(e) { showToast('Error de conexión', 'err'); }
 }
@@ -2473,32 +2515,29 @@ async function abrirAdminRutas(tipoRuta) {
   }
 }
 
-function renderAdminRutas(rutas, tipoRuta) {
-  if (!rutas.length) {
+function renderAdminRutas(subsectores, tipoRuta) {
+  if (!subsectores.length) {
     document.getElementById('admin-rutas-content').innerHTML = `
-      <div class="empty-state"><div class="empty-icon">📋</div><p>No hay rutas guardadas.</p></div>`;
+      <div class="empty-state"><div class="empty-icon">📋</div><p>No hay inspecciones guardadas.</p></div>`;
     return;
   }
 
-  const html = rutas.map(ruta => {
-    const estadoColor = ruta.estado === 'completada' ? 'var(--accent)' : 'var(--accent2)';
-    const estadoLabel = ruta.estado === 'completada' ? 'Cerrada' : 'En curso';
-    const fechaLabel  = ruta.estado === 'completada'
-      ? `${ruta.fechaInicio} → ${ruta.fechaFin}`
-      : `Inicio: ${ruta.fechaInicio}`;
+  const html = subsectores.map(sub => {
+    const subrutasHtml = sub.subrutas.map(sr => {
+      const estadoColor = sr.estado === 'completada' ? 'var(--accent)' : 'var(--accent2)';
+      const estadoLabel = sr.estado === 'completada' ? 'Cerrada' : 'En curso';
+      const fechaLabel  = sr.estado === 'completada'
+        ? `${sr.fechaInicio} → ${sr.fechaFin}`
+        : `Inicio: ${sr.fechaInicio}`;
 
-    // Subsectores con puntos
-    const subsHtml = ruta.subsectores.map(sub => {
-      const puntosHtml = sub.puntos.map(p => {
+      const puntosHtml = sr.puntos.map(p => {
         const color = p.estado === 'conforme' ? 'var(--accent)' : p.estado === 'nc' ? 'var(--danger)' : 'var(--muted)';
         const label = p.estado === 'conforme' ? 'C' : p.estado === 'nc' ? `NC(${p.cantNC})` : '○';
-        // Observaciones de NCs
-        const obsHtml = p.estado === 'nc' ? Array.from({length: p.cantNC}, (_,i) => {
-          const obs = p[`nc${i+1}obs`] || '';
-          return obs ? `<div style="font-size:10px;color:var(--muted);padding-left:16px;font-family:'DM Mono',monospace;">→ ${obs}</div>` : '';
-        }).join('') : '';
+        const obsHtml = p.obs && p.obs.length > 0
+          ? p.obs.map(o => `<div style="font-size:10px;color:var(--muted);padding-left:16px;font-family:'DM Mono',monospace;">→ ${o}</div>`).join('')
+          : '';
         return `
-          <div style="padding:3px 0;">
+          <div style="padding:2px 0;">
             <div style="display:flex;align-items:center;gap:6px;">
               <span style="color:${color};font-size:11px;font-weight:700;font-family:'DM Mono',monospace;min-width:40px;">${label}</span>
               <span style="font-size:12px;color:var(--text);">${p.punto}</span>
@@ -2508,33 +2547,35 @@ function renderAdminRutas(rutas, tipoRuta) {
       }).join('');
 
       return `
-        <div style="margin:6px 0;padding:8px 12px;background:var(--surface2);border-radius:8px;border:1px solid var(--border);">
-          <div style="font-size:11px;font-weight:700;color:var(--muted);margin-bottom:4px;font-family:'DM Mono',monospace;">
-            ${sub.area} › ${sub.sector} › ${sub.subsector}
+        <div style="margin-bottom:10px;background:var(--surface2);border:1px solid var(--border);border-radius:10px;overflow:hidden;">
+          <div style="padding:10px 14px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+              <span style="font-size:11px;font-family:'DM Mono',monospace;color:${estadoColor};font-weight:700;">● ${estadoLabel}</span>
+              ${sr.totalNC > 0 ? `<span style="font-size:11px;color:var(--danger);font-family:'DM Mono',monospace;">${sr.totalNC} NC</span>` : ''}
+            </div>
+            <div style="font-size:11px;color:var(--muted);font-family:'DM Mono',monospace;">${fechaLabel}</div>
+            <div style="font-size:11px;color:var(--muted);">Inspector: ${sr.inspector}</div>
           </div>
-          ${puntosHtml}
+          ${puntosHtml ? `<div style="padding:4px 14px 8px;">${puntosHtml}</div>` : ''}
+          <div style="padding:8px 14px;border-top:1px solid var(--border);">
+            <button onclick="confirmarEliminarSubRuta('${sr.idSubRuta}','${tipoRuta}')"
+              style="width:100%;background:rgba(255,71,87,.1);border:1px solid var(--danger);color:var(--danger);
+                     border-radius:8px;padding:9px;font-size:12px;font-weight:700;
+                     font-family:'Syne',sans-serif;cursor:pointer;">
+              🗑 Eliminar esta inspección
+            </button>
+          </div>
         </div>`;
     }).join('');
 
     return `
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:14px;overflow:hidden;">
-        <div style="padding:14px;">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
-            <span style="font-size:11px;font-family:'DM Mono',monospace;color:${estadoColor};font-weight:700;">● ${estadoLabel}</span>
-            ${ruta.totalNC > 0 ? `<span style="font-size:11px;color:var(--danger);font-family:'DM Mono',monospace;">${ruta.totalNC} NC</span>` : ''}
-          </div>
-          <div style="font-size:12px;color:var(--muted);margin-bottom:2px;font-family:'DM Mono',monospace;">${fechaLabel}</div>
-          <div style="font-size:12px;color:var(--muted);">Inspector: ${ruta.inspector}</div>
-          <div style="font-size:10px;color:var(--border);font-family:'DM Mono',monospace;margin-top:2px;">${ruta.idRuta}</div>
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);margin-bottom:16px;overflow:hidden;">
+        <div style="padding:14px 14px 10px;border-bottom:1px solid var(--border);">
+          <div style="font-size:15px;font-weight:700;">${sub.subsector}</div>
+          <div style="font-size:12px;color:var(--muted);">${sub.area} › ${sub.sector}</div>
         </div>
-        ${subsHtml ? `<div style="padding:0 14px 8px;">${subsHtml}</div>` : ''}
-        <div style="padding:10px 14px;border-top:1px solid var(--border);">
-          <button onclick="confirmarEliminarRuta('${ruta.idRuta}','${tipoRuta}')"
-            style="width:100%;background:rgba(255,71,87,.1);border:1px solid var(--danger);color:var(--danger);
-                   border-radius:8px;padding:10px;font-size:13px;font-weight:700;
-                   font-family:'Syne',sans-serif;cursor:pointer;">
-            🗑 Eliminar esta ruta
-          </button>
+        <div style="padding:12px 14px;">
+          ${subrutasHtml || '<div style="color:var(--muted);font-size:12px;">Sin inspecciones</div>'}
         </div>
       </div>`;
   }).join('');
@@ -2542,13 +2583,13 @@ function renderAdminRutas(rutas, tipoRuta) {
   document.getElementById('admin-rutas-content').innerHTML = html;
 }
 
-async function confirmarEliminarRuta(idRuta, tipoRuta) {
-  if (!confirm(`¿Eliminar la ruta ${idRuta}?\n\nEsta acción no se puede deshacer.`)) return;
-  showToast('Eliminando ruta...', 'load', 0);
+async function confirmarEliminarSubRuta(idSubRuta, tipoRuta) {
+  if (!confirm(`¿Eliminar esta inspección?\n\nSe borrarán todos los puntos, NCs y fotos asociados.\nEsta acción no se puede deshacer.`)) return;
+  showToast('Eliminando...', 'load', 0);
   try {
-    const r = await api('eliminarRuta', { idRuta });
+    const r = await api('eliminarSubRuta', { idSubRuta });
     if (!r.ok) { showToast(r.error || 'Error', 'err'); return; }
-    showToast('✓ Ruta eliminada', 'ok');
+    showToast('Inspección eliminada', 'ok');
     await abrirAdminRutas(tipoRuta);
   } catch(e) { showToast('Error de conexión', 'err'); }
 }
