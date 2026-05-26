@@ -1301,7 +1301,7 @@ async function generarPDF(area, sector, subsector) {
 
     y = 45;
 
-    // ── Resumen ──
+    // ── Puntos ──
     const puntosSub = state.avance.filter(p =>
       p.Area === area && p.Sector === sector && p.Subsector === subsector &&
       p.Punto !== '✓ SECTOR CERRADO' && p.Punto !== '⚑ Hallazgo no listado'
@@ -1310,28 +1310,6 @@ async function generarPDF(area, sector, subsector) {
       p.Area === area && p.Sector === sector && p.Subsector === subsector &&
       p.Punto === '⚑ Hallazgo no listado'
     );
-    const totalPuntos  = puntosSub.length;
-    const conformes    = puntosSub.filter(p => p.estado === 'conforme').length;
-    const conNC        = puntosSub.filter(p => p.estado === 'nc').length;
-    const totalNC      = puntosSub.reduce((acc, p) => acc + (Number(p.cantNC) || 0), 0) + noListados.reduce((acc, p) => acc + (Number(p.cantNC) || 0), 0);
-
-    doc.setFillColor(240, 245, 240);
-    doc.rect(margin, y, W - margin*2, 20, 'F');
-    doc.setDrawColor(...colorBorde);
-    doc.rect(margin, y, W - margin*2, 20, 'S');
-
-    doc.setTextColor(...colorPrimario);
-    doc.setFontSize(10);
-    doc.setFont('helvetica', 'bold');
-    doc.text('RESUMEN', margin + 4, y + 7);
-
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(50, 50, 50);
-    doc.text(`✓ Conformes: ${conformes}   ⚠ Con NC: ${conNC}   Total NC: ${totalNC}   Total puntos: ${totalPuntos}`, margin + 4, y + 15);
-    y += 28;
-
-    // ── Puntos ──
     const todosLosPuntos = [...puntosSub, ...noListados].sort((a,b) => Number(a.Orden) - Number(b.Orden));
 
     for (const p of todosLosPuntos) {
@@ -1356,7 +1334,7 @@ async function generarPDF(area, sector, subsector) {
       }
       doc.text(p.Punto, margin + 4, y + 7);
 
-      const estadoLabel = p.estado === 'conforme' ? '✓ CONFORME' : p.cantNC > 0 ? `⚠ ${p.cantNC} NC` : 'PENDIENTE';
+      const estadoLabel = p.estado === 'conforme' ? 'CONFORME' : p.cantNC > 0 ? `NC (${p.cantNC})` : 'PENDIENTE';
       doc.setFontSize(8);
       doc.setFont('helvetica', 'normal');
       doc.setTextColor(...colorGris);
