@@ -2194,13 +2194,22 @@ async function subirFotoAPI(dataUrl, nombre) {
 function nuevaNCEnPunto() {
   document.getElementById('btn-guardar-nc').style.display = 'block';
   document.getElementById('btn-guardar-nc').disabled = true;
+  document.getElementById('btn-guardar-nc').textContent = 'Guardar NC';
   document.getElementById('panel-post-nc').style.display = 'none';
-  // Reset formulario
-  state.foto1 = null; state.foto1DataUrl = null; state.foto1Marcada = null;
-  state.foto2 = null; state.foto2DataUrl = null; state.foto2Marcada = null;
-  state.planoMarcado = null; state.planoMarcadoOk = false;
+  // Reset formulario completo incluyendo URLs
+  state.foto1 = null; state.foto1DataUrl = null; state.foto1Marcada = null; state.foto1Url = null;
+  state.foto2 = null; state.foto2DataUrl = null; state.foto2Marcada = null; state.foto2Url = null;
+  state.planoMarcado = null; state.planoMarcadoOk = false; state.planoUrl = null;
   document.getElementById('nc-obs').value = '';
   document.getElementById('canvas-foto-section').style.display = 'none';
+  document.getElementById('btn-subir-fotos-wrapper').style.display = 'none';
+  document.getElementById('fotos-status').textContent = '';
+  document.getElementById('btn-identificar-wrapper').style.display = 'none';
+  document.getElementById('plano-status').textContent = '';
+  const btnSubir = document.getElementById('btn-subir-fotos');
+  if (btnSubir) { btnSubir.textContent = '↑ Subir foto(s)'; btnSubir.style.background = 'var(--accent2)'; btnSubir.disabled = false; }
+  const btnId = document.getElementById('btn-identificar');
+  if (btnId) { btnId.textContent = '📍 Identificar lugar'; btnId.style.background = 'var(--accent2)'; btnId.disabled = false; }
   resetSlot(1); resetSlot(2);
   cargarPlano();
   if (state.modoManual) checkValidationManual();
