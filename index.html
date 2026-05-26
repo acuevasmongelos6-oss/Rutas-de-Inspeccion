@@ -972,7 +972,11 @@ function renderSubsectores() {
     const total    = plantSub.length;
     const marcados = puntosSub.filter(p => p.estado !== 'pendiente').length;
     const conNC    = puntosSub.filter(p => p.estado === 'nc').length;
-    const cerrado  = state.sectoresCerrados?.[area+'|'+sector+'|'+sub];
+    const cerrado  = state.sectoresCerrados?.[area+'|'+sector+'|'+sub] ||
+      state.avance.find(p =>
+        p.Area === area && p.Sector === sector && p.Subsector === sub &&
+        p.Punto === '✓ SECTOR CERRADO'
+      )?.fechaHora || null;
 
     // Última inspección
     const ultima = state.ultimaPorSubsector?.[area+'|'+sector+'|'+sub];
