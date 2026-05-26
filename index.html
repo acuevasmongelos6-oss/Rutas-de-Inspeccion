@@ -778,6 +778,14 @@ async function openRuta(tipoRuta, idRuta) {
     state.plantilla = plantR.data || [];
     state.avance    = avR.data?.puntos || [];
     state.ultimaPorSubsector = state.ultimaPorSubsectorGlobal?.[tipoRuta] || {};
+
+    // Reconstruir sectoresCerrados desde Sheets
+    state.sectoresCerrados = {};
+    (avR.data?.sectorsCerrados || []).forEach(sc => {
+      const key = sc.Area + '|' + sc.Sector + '|' + sc.Subsector;
+      state.sectoresCerrados[key] = sc.FechaHora || 'cerrado';
+    });
+
     renderRutaContent();
   } catch(e) { showToast('Error al cargar ruta', 'err'); }
 }
@@ -1926,7 +1934,10 @@ function verNC(area, sector, subsector, punto, ncIdx) {
   const obs = p['NC'+ncIdx+'_Obs'] || '';
   document.getElementById('ver-nc-obs-texto').textContent = obs || 'Sin observación';
   document.getElementById('ver-nc-edit-section').style.display = 'none';
-  document.getElementById('ver-nc-btn-editar').style.display = 'block';
+
+  // Ocultar botón editar si el sector está cerrado
+  const cerrado = !!(state.sectoresCerrados?.[area+'|'+sector+'|'+subsector]);
+  document.getElementById('ver-nc-btn-editar').style.display = cerrado ? 'none' : 'block';
 
   document.getElementById('modal-ver-nc').style.display = 'flex';
 }
