@@ -636,12 +636,32 @@ function renderHome() {
 // ════════════════════════════════════════════
 // NAVEGACIÓN RUTA → ÁREA → SECTOR → SUBSECTOR
 // ════════════════════════════════════════════
-function abrirRuta(tipo) {
+async function abrirRuta(tipo) {
   G.tipo = tipo;
   G.plantilla = tipo==='EST' ? G.pEST : G.pMEQ;
   document.getElementById('areas-title').textContent = tipo==='EST' ? 'Ruta Estructural' : 'Ruta MEQ';
   document.getElementById('areas-sub').textContent = G.inspector.nombre;
+  showScr('scr-areas');
+
+  // Si la plantilla está vacía, intentar recargarla
+  if (!G.plantilla || G.plantilla.length === 0) {
+    document.getElementById('areas-list').innerHTML = '<div style="padding:24px;text-align:center;color:var(--muted)"><div class="spin" style="margin:0 auto 8px"></div>Cargando plantilla...</div>';
+    try {
+      const r = await api('getPlantilla', {tipoRuta: tipo});
+      if (tipo==='EST') G.pEST = r.data||[];
+      else G.pMEQ = r.data||[];
+      G.plantilla = r.data||[];
+    } catch(e) {
+      document.getElementById('areas-list').innerHTML = '<div class="empty"><div class="ico">⚠️</div><div>Error al cargar la plantilla.<br><small style="font-family:\'DM Mono\',monospace">Verificá la conexión y volvé a intentarlo.</small></div></div>';
+      return;
+    }
+  }
+
   const areas = [...new Set(G.plantilla.map(p=>p.Area))];
+  if (areas.length === 0) {
+    document.getElementById('areas-list').innerHTML = '<div class="empty"><div class="ico">📋</div><div>No hay áreas disponibles<br>para este tipo de ruta.</div></div>';
+    return;
+  }
   document.getElementById('areas-list').innerHTML = areas.map(a=>`
     <div class="nav-item" onclick="abrirArea('${esc(a)}')">
       <div class="nav-item-row">
@@ -649,7 +669,6 @@ function abrirRuta(tipo) {
         <div class="nav-item-right"><span class="nav-arrow">›</span></div>
       </div>
     </div>`).join('');
-  showScr('scr-areas');
 }
 
 function abrirArea(area) {
