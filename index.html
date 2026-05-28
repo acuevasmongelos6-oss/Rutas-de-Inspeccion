@@ -636,32 +636,12 @@ function renderHome() {
 // ════════════════════════════════════════════
 // NAVEGACIÓN RUTA → ÁREA → SECTOR → SUBSECTOR
 // ════════════════════════════════════════════
-async function abrirRuta(tipo) {
+function abrirRuta(tipo) {
   G.tipo = tipo;
   G.plantilla = tipo==='EST' ? G.pEST : G.pMEQ;
   document.getElementById('areas-title').textContent = tipo==='EST' ? 'Ruta Estructural' : 'Ruta MEQ';
   document.getElementById('areas-sub').textContent = G.inspector.nombre;
-  showScr('scr-areas');
-
-  // Si la plantilla está vacía, intentar recargarla
-  if (!G.plantilla || G.plantilla.length === 0) {
-    document.getElementById('areas-list').innerHTML = '<div style="padding:24px;text-align:center;color:var(--muted)"><div class="spin" style="margin:0 auto 8px"></div>Cargando plantilla...</div>';
-    try {
-      const r = await api('getPlantilla', {tipoRuta: tipo});
-      if (tipo==='EST') G.pEST = r.data||[];
-      else G.pMEQ = r.data||[];
-      G.plantilla = r.data||[];
-    } catch(e) {
-      document.getElementById('areas-list').innerHTML = '<div class="empty"><div class="ico">⚠️</div><div>Error al cargar la plantilla.<br><small style="font-family:\'DM Mono\',monospace">Verificá la conexión y volvé a intentarlo.</small></div></div>';
-      return;
-    }
-  }
-
   const areas = [...new Set(G.plantilla.map(p=>p.Area))];
-  if (areas.length === 0) {
-    document.getElementById('areas-list').innerHTML = '<div class="empty"><div class="ico">📋</div><div>No hay áreas disponibles<br>para este tipo de ruta.</div></div>';
-    return;
-  }
   document.getElementById('areas-list').innerHTML = areas.map(a=>`
     <div class="nav-item" onclick="abrirArea('${esc(a)}')">
       <div class="nav-item-row">
@@ -669,6 +649,7 @@ async function abrirRuta(tipo) {
         <div class="nav-item-right"><span class="nav-arrow">›</span></div>
       </div>
     </div>`).join('');
+  showScr('scr-areas');
 }
 
 function abrirArea(area) {
@@ -1343,9 +1324,21 @@ async function generarPDF(subsector,idRuta,parcial=false) {
       const reg=puntos.find(x=>x.punto===p.Punto);
       const est=reg?.estadoPunto||'pendiente';
       const cantNC=reg?.cantNC||0;
-      if(y>262){doc.addPage();y=M;}
-      // fila punto
+      // Calcular alto total del bloque punto+NCs para mantenerlos juntos
       const rowH=10;
+      if(est==='nc'&&cantNC>0){
+        let bloqueTotal=rowH+2;
+        for(let nn=1;nn<=cantNC;nn++){
+          const obsN=reg['NC'+nn+'_Obs']||'';
+          const hasImgN=!!(reg['NC'+nn+'_Foto1']||reg['NC'+nn+'_Foto2']||reg['NC'+nn+'_Plano']);
+          const tLines=doc.splitTextToSize('NC #'+nn+(obsN?' — '+obsN:''),W-M*2-4);
+          bloqueTotal+=tLines.length*5+4+(hasImgN?52+8:0)+8;
+        }
+        if(y+bloqueTotal>272){doc.addPage();y=M;}
+      } else {
+        if(y>262){doc.addPage();y=M;}
+      }
+      // fila punto
       const bgR=est==='nc'?[60,15,15]:est==='conforme'?[15,30,25]:[25,28,34];
       doc.setFillColor(...bgR);
       doc.rect(M,y,W-M*2,rowH,'F');
@@ -1356,7 +1349,7 @@ async function generarPDF(subsector,idRuta,parcial=false) {
       doc.setFontSize(8);doc.setFont('helvetica','normal');
       doc.setTextColor(150,160,170);
       doc.text(lblEst,W-M-2,y+7,{align:'right'});
-      y+=rowH+2;
+      y+=rowH+6;
 
       // NCs
       if(est==='nc'&&cantNC>0){
@@ -1366,21 +1359,23 @@ async function generarPDF(subsector,idRuta,parcial=false) {
           const f2=reg['NC'+n+'_Foto2']||'';
           const pl2=reg['NC'+n+'_Plano']||'';
 
-          if(y>255){doc.addPage();y=M;}
+          // Calcular espacio necesario: título + fotos juntos
+          const imgs=[f1||null,f2||null,pl2||null];
+          const hasImg=imgs.some(Boolean);
+          const IH=52,GAP=3,CW=(W-M*2-GAP*2)/3;
+          const tituloLines=doc.splitTextToSize('NC #'+n+(obs?' — '+obs:''),W-M*2-4);
+          const tituloH=tituloLines.length*5+4;
+          const bloqueH=tituloH+(hasImg?IH+8:0)+8;
+          // Si el bloque completo no cabe, saltar página
+          if(y+bloqueH>272){doc.addPage();y=M;}
           // Título NC
           doc.setFontSize(9);doc.setFont('helvetica','bold');
           doc.setTextColor(248,81,73);
-          const titulo='NC #'+n+(obs?' — '+obs:'');
-          const lines=doc.splitTextToSize(titulo,W-M*2-4);
-          lines.forEach(l=>{if(y>270){doc.addPage();y=M;}doc.text(l,M+4,y);y+=5;});
+          tituloLines.forEach(l=>{doc.text(l,M+4,y);y+=5;});
           y+=2;
 
           // Imágenes — 3 columnas fijas
-          const imgs=[f1||null,f2||null,pl2||null];
-          const hasImg=imgs.some(Boolean);
           if(hasImg){
-            const IH=52,GAP=3,CW=(W-M*2-GAP*2)/3;
-            if(y+IH+8>272){doc.addPage();y=M;}
             for(let j=0;j<3;j++){
               const x=M+j*(CW+GAP);
               doc.setDrawColor(50,55,65);
