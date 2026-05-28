@@ -1452,8 +1452,17 @@ async function generarPDF(subsector,idRuta,parcial=false) {
     hideToast();
     const sufijo=parcial?'_parcial':'_completa';
     const nombre='Inspeccion_'+subsector.replace(/\s+/g,'-')+'_'+new Date().toISOString().slice(0,10)+sufijo+'.pdf';
+    // Descarga local
     doc.save(nombre);
-    toast('✓ PDF generado','ok');
+    // Subir a Drive
+    toast('Subiendo a Drive...','load',0);
+    try {
+      const base64pdf=doc.output('datauristring').split(',')[1];
+      const rd=await api('subirPDF',{base64:base64pdf,nombre,tipoRuta:G.tipo,area:G.area,sector:G.sector,subsector});
+      hideToast();
+      if(rd.ok) toast('✓ PDF guardado en Drive','ok');
+      else toast('PDF descargado (Drive: '+rd.error+')','ok');
+    } catch(e2){ hideToast(); toast('✓ PDF descargado (sin Drive)','ok'); }
   } catch(e){hideToast();toast('Error al generar PDF: '+e.message,'err');console.error(e);}
 }
 
