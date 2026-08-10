@@ -478,8 +478,15 @@ canvas#cvs-plano{width:100%;display:block;cursor:crosshair}
 // CONFIG — reemplazá la URL
 // ════════════════════════════════════════════
 const API_URL     = 'https://script.google.com/macros/s/AKfycbxO64zjkEuHpBLln5a7AobCZ2C6bz-N_UBXRfKBt8jjjCRfte2xZ0sb0mefr8d7gOAr/exec';
+const API_TOKEN   = '';
 const PLANOS_BASE = './planos/';
 const CACHE_PFX   = 'ri2_';
+
+// ════════════════════════════════════════════
+// ESCAPES (XSS)
+// ════════════════════════════════════════════
+function escHtml(s){return String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
+function escJs(s){return String(s??'').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'\\"').replace(/</g,'\\x3c');}
 
 // ════════════════════════════════════════════
 // ESTADO
@@ -511,7 +518,10 @@ const G = {
 let _tt = null;
 function toast(msg, t='ok', dur=3000) {
   const el = document.getElementById('toast');
-  el.innerHTML = (t==='load'?'<span class="spin"></span>':t==='ok'?'✓':'✗') + ' ' + msg;
+  el.innerHTML = (t==='load'?'<span class="spin"></span>':t==='ok'?'✓':'✗') + ' ';
+  const sp = document.createElement('span');
+  sp.textContent = String(msg??'');
+  el.appendChild(sp);
   el.className = 'show ' + t;
   clearTimeout(_tt);
   if (dur>0) _tt = setTimeout(()=>el.className='', dur);
@@ -522,7 +532,9 @@ function hideToast() { document.getElementById('toast').className=''; }
 // API
 // ════════════════════════════════════════════
 async function api(accion, body={}) {
-  const r = await fetch(API_URL, { method:'POST', body:JSON.stringify({accion,...body}) });
+  // Sin Content-Type a propósito: evita el preflight CORS con Apps Script
+  const r = await fetch(API_URL, { method:'POST', body:JSON.stringify({accion, token:API_TOKEN, ...body}) });
+  if(!r.ok) throw new Error('HTTP '+r.status);
   return r.json();
 }
 
@@ -645,7 +657,7 @@ function abrirRuta(tipo) {
   document.getElementById('areas-list').innerHTML = areas.map(a=>`
     <div class="nav-item" onclick="abrirArea('${esc(a)}')">
       <div class="nav-item-row">
-        <div class="nav-item-left"><div class="nav-item-name">${a}</div></div>
+        <div class="nav-item-left"><div class="nav-item-name">${escHtml(a)}</div></div>
         <div class="nav-item-right"><span class="nav-arrow">›</span></div>
       </div>
     </div>`).join('');
@@ -660,7 +672,7 @@ function abrirArea(area) {
   document.getElementById('sec-list').innerHTML = sects.map(s=>`
     <div class="nav-item" onclick="abrirSector('${esc(s)}')">
       <div class="nav-item-row">
-        <div class="nav-item-left"><div class="nav-item-name">${s}</div></div>
+        <div class="nav-item-left"><div class="nav-item-name">${escHtml(s)}</div></div>
         <div class="nav-item-right"><span class="nav-arrow">›</span></div>
       </div>
     </div>`).join('');
@@ -688,20 +700,20 @@ async function abrirSector(sector) {
           const marc = pts.filter(p=>p.estadoPunto!=='pendiente').length;
           const pct = pl.length>0 ? Math.round(marc/pl.length*100) : 0;
           badge=pct+'%'; badgeCls='go';
-          histHtml=`<div class="hist-row"><span class="hist-estado" style="color:var(--blue)">● En curso</span><span class="hist-fecha">${ruta.fechaInicio?.slice(0,10)||''}</span></div>`;
+          histHtml=`<div class="hist-row"><span class="hist-estado" style="color:var(--blue)">● En curso</span><span class="hist-fecha">${escHtml(ruta.fechaInicio?.slice(0,10)||'')}</span></div>`;
         } else {
           badge='✓'; badgeCls='ok';
-          histHtml=`<div class="hist-row"><span class="hist-estado" style="color:var(--accent)">● Finalizada</span><span class="hist-fecha">${ruta.fechaFin?.slice(0,10)||''}</span></div>`;
-          pdfBtn=`<button class="btn-pdf-small" onclick="ev(event);generarPDF('${esc(sub)}','${ruta.idRuta}')">📄 PDF</button>`;
+          histHtml=`<div class="hist-row"><span class="hist-estado" style="color:var(--accent)">● Finalizada</span><span class="hist-fecha">${escHtml(ruta.fechaFin?.slice(0,10)||'')}</span></div>`;
+          pdfBtn=`<button class="btn-pdf-small" onclick="ev(event);generarPDF('${esc(sub)}','${esc(ruta.idRuta)}')">📄 PDF</button>`;
         }
       } else if (hist) {
-        histHtml=`<div class="hist-row"><span class="hist-estado" style="color:var(--${hist.estado==='completada'?'accent':'blue'})">● ${hist.estado==='completada'?'Finalizada':'En curso'}</span><span class="hist-fecha">${hist.fechaInicio?.slice(0,10)||''}</span><span class="hist-insp">${hist.inspector}</span></div>`;
+        histHtml=`<div class="hist-row"><span class="hist-estado" style="color:var(--${hist.estado==='completada'?'accent':'blue'})">● ${hist.estado==='completada'?'Finalizada':'En curso'}</span><span class="hist-fecha">${escHtml(hist.fechaInicio?.slice(0,10)||'')}</span><span class="hist-insp">${escHtml(hist.inspector)}</span></div>`;
       }
       return `
         <div class="nav-item">
           <div class="nav-item-row" onclick="abrirSubsector('${esc(sub)}')">
             <div class="nav-item-left">
-              <div class="nav-item-name">${sub}</div>
+              <div class="nav-item-name">${escHtml(sub)}</div>
             </div>
             <div class="nav-item-right">
               ${pdfBtn}
@@ -756,7 +768,7 @@ function renderPuntos() {
 
   html += pl.map(p=>{
     const est   = G.puntos[p.Punto]?.estadoPunto||'pendiente';
-    const cantNC = G.puntos[p.Punto]?.cantNC||0;
+    const cantNC = Number(G.puntos[p.Punto]?.cantNC)||0;
     const tieneNC = est==='nc'&&cantNC>0;
 
     let ncsHtml = '';
@@ -764,9 +776,9 @@ function renderPuntos() {
       ncsHtml='<div class="nc-lista">';
       for(let i=1;i<=cantNC;i++){
         const obs=G.puntos[p.Punto]?.['NC'+i+'_Obs']||'';
-        ncsHtml+=`<div class="nc-row" data-punto="${esc(p.Punto)}" data-idx="${i}">
+        ncsHtml+=`<div class="nc-row" data-punto="${escHtml(p.Punto)}" data-idx="${i}">
           <span class="nc-num">NC ${i}</span>
-          <span class="nc-txt">${obs||'Sin descripción'}</span>
+          <span class="nc-txt">${escHtml(obs)||'Sin descripción'}</span>
           <span class="nc-eye">👁</span>
         </div>`;
       }
@@ -776,7 +788,7 @@ function renderPuntos() {
     const dcC = (cerrado||tieneNC) ? 'disabled' : '';
     const dcN = cerrado ? 'disabled' : '';
     return `<div class="punto-row">
-      <div class="punto-nombre">${p.Punto}</div>
+      <div class="punto-nombre">${escHtml(p.Punto)}</div>
       <div class="punto-btns">
         <button class="btn-c ${est==='conforme'?'on':''}" ${dcC} onclick="marcarC('${esc(p.Punto)}')">✓ Conforme</button>
         <button class="btn-n ${tieneNC?'on':''}" ${dcN} onclick="abrirNC('${esc(p.Punto)}',false)">⚠ NC${cantNC>0?' ('+cantNC+')':''}</button>
@@ -816,11 +828,16 @@ function marcarC(punto) {
 // ════════════════════════════════════════════
 // GUARDAR INSPECCIÓN
 // ════════════════════════════════════════════
+let _guardandoInsp=false;
 async function guardarInspeccion() {
+  if(_guardandoInsp) return false;
   const pl=G.plantilla.filter(p=>p.Area===G.area&&p.Sector===G.sector&&p.Subsector===G.subsector);
   const hayC=pl.some(p=>{ const e=G.puntos[p.Punto]?.estadoPunto; return e==='conforme'||e==='nc'; });
   const hayH=G.puntos['⚑ Hallazgo no listado']?.estadoPunto==='nc';
   if(!hayC&&!hayH){ toast('No hay cambios para guardar','err'); return false; }
+  _guardandoInsp=true;
+  const btnG=document.querySelector('.btn-guardar');
+  if(btnG) btnG.disabled=true;
   toast('Guardando...','load',0);
   try {
     const puntos=[];
@@ -839,6 +856,7 @@ async function guardarInspeccion() {
     renderPuntos();
     return true;
   } catch(e){ toast('Error de conexión','err'); return false; }
+  finally { _guardandoInsp=false; if(btnG) btnG.disabled=false; }
 }
 
 function buildPayload(punto,orden) {
@@ -856,20 +874,25 @@ function buildPayload(punto,orden) {
 // ════════════════════════════════════════════
 // FINALIZAR
 // ════════════════════════════════════════════
+let _finalizando=false;
 async function finalizarInspeccion() {
+  if(_finalizando) return;
   if(!confirm('¿Finalizar esta inspección?')) return;
-  const ok=await guardarInspeccion();
-  if(!ok||!G.idRuta) return;
-  toast('Finalizando...','load',0);
+  _finalizando=true;
+  const btnF=document.getElementById('btn-fin');
+  btnF.disabled=true;
   try {
+    const ok=await guardarInspeccion();
+    if(!ok||!G.idRuta) return;
+    toast('Finalizando...','load',0);
     const r=await api('finalizarInspeccion',{idRuta:G.idRuta});
     hideToast();
     if(!r.ok){ toast(r.error||'Error','err'); return; }
     G.estadoRuta='completada';
     toast('✓ Inspección finalizada','ok');
-    renderPuntos();
     setTimeout(()=>abrirSector(G.sector),1500);
   } catch(e){ toast('Error de conexión','err'); }
+  finally { _finalizando=false; renderPuntos(); }
 }
 
 // ════════════════════════════════════════════
@@ -904,10 +927,13 @@ function abrirNC(punto,manual) {
   document.getElementById('req-obs').textContent=req;
 
   resetSlot(1); resetSlot(2);
-  document.getElementById('btn-subir').disabled=true;
-  document.getElementById('foto-status').textContent='';
+  const bs=document.getElementById('btn-subir');
+  bs.disabled=true; bs.textContent='↑ Subir foto(s)'; bs.style.background='var(--blue)';
+  const fst=document.getElementById('foto-status');
+  fst.textContent=''; fst.style.color='var(--muted)';
   document.getElementById('btn-id').style.display='none';
-  document.getElementById('plano-status').textContent='';
+  const pst=document.getElementById('plano-status');
+  pst.textContent=''; pst.style.color='var(--muted)';
   const bi=document.getElementById('btn-id');
   bi.textContent='📍 Identificar lugar'; bi.style.background='var(--blue)'; bi.disabled=false;
 
@@ -960,10 +986,13 @@ function quitarFoto(n) {
   checkVal();
 }
 
+let _subiendoFotos=false;
 async function subirFotos() {
+  if(_subiendoFotos) return;
+  _subiendoFotos=true;
   const btn=document.getElementById('btn-subir');
   const st=document.getElementById('foto-status');
-  btn.disabled=true; btn.textContent='Subiendo...';
+  btn.disabled=true; btn.textContent='Subiendo...'; btn.style.background='var(--blue)';
   try {
     if(G.f1&&!G.f1url){
       st.textContent='Subiendo foto 1...';
@@ -983,7 +1012,7 @@ async function subirFotos() {
   } catch(e) {
     btn.disabled=false; btn.textContent='↑ Reintentar'; btn.style.background='var(--danger)';
     st.style.color='var(--danger)'; st.textContent='✗ Error al subir';
-  }
+  } finally { _subiendoFotos=false; }
 }
 
 // ── Canvas foto ──
@@ -1069,7 +1098,7 @@ function cargarPlano() {
     document.getElementById('plano-hint').style.display='block';
     setupPlanoEvents(c);
   };
-  img.onerror=()=>{document.getElementById('plano-ph').innerHTML='<div style="font-size:28px">🗺️</div><p style="font-size:11px;margin-top:6px;color:var(--muted)">Plano no encontrado: '+cod+'</p>';};
+  img.onerror=()=>{document.getElementById('plano-ph').innerHTML='<div style="font-size:28px">🗺️</div><p style="font-size:11px;margin-top:6px;color:var(--muted)">Plano no encontrado: '+escHtml(cod)+'</p>';};
   img.src=url;
 }
 
@@ -1155,7 +1184,7 @@ function verNC(punto,idx) {
   document.getElementById('modal-fotos').innerHTML=items.map(it=>`
     <div class="mf-item">
       <div class="mf-lbl">${it.lbl}</div>
-      <img class="mf-img" src="${thumbUrl(it.url)}" onclick="window.open('${it.url}','_blank')" loading="lazy">
+      <img class="mf-img" src="${escHtml(thumbUrl(it.url))}" onclick="window.open('${escHtml(escJs(it.url))}','_blank')" loading="lazy">
     </div>`).join('');
   const obs=p['NC'+idx+'_Obs']||'';
   const obsEl=document.getElementById('modal-obs');
@@ -1196,7 +1225,7 @@ async function abrirAdminRutas(tipo) {
   showScr('scr-admin-rutas');
   try {
     const r=await api('getRutasAdmin',{tipoRuta:tipo});
-    if(!r.ok){document.getElementById('adm-body').innerHTML='<p style="color:var(--danger);padding:16px">'+r.error+'</p>';return;}
+    if(!r.ok){document.getElementById('adm-body').innerHTML='<p style="color:var(--danger);padding:16px">'+escHtml(r.error)+'</p>';return;}
     renderAdminRutas(r.data,tipo);
   } catch(e){document.getElementById('adm-body').innerHTML='<p style="color:var(--danger);padding:16px">Error de conexión</p>';}
 }
@@ -1206,8 +1235,8 @@ function renderAdminRutas(subs,tipo) {
   document.getElementById('adm-body').innerHTML=subs.map(sub=>`
     <div class="sub-grp">
       <div class="sub-grp-hdr">
-        <div class="sub-grp-name">${sub.subsector}</div>
-        <div class="sub-grp-sub">${sub.area} › ${sub.sector}</div>
+        <div class="sub-grp-name">${escHtml(sub.subsector)}</div>
+        <div class="sub-grp-sub">${escHtml(sub.area)} › ${escHtml(sub.sector)}</div>
       </div>
       ${sub.inspecciones.map(ins=>{
         const col=ins.estado==='completada'?'var(--accent)':'var(--blue)';
@@ -1217,18 +1246,18 @@ function renderAdminRutas(subs,tipo) {
           :'Inicio: '+(ins.fechaInicio?.slice(0,10)||'');
         const pts=ins.puntos.map(p=>{
           const c=p.estado==='conforme'?'var(--accent)':p.estado==='nc'?'var(--danger)':'var(--muted)';
-          const l=p.estado==='conforme'?'C':p.estado==='nc'?'NC('+p.cantNC+')':'○';
-          const obs=(p.obs||[]).map(o=>`<div class="pt-obs">→ ${o}</div>`).join('');
-          return `<div class="insp-pt-row"><span class="pt-est" style="color:${c}">${l}</span><span class="pt-nom">${p.punto}</span></div>${obs}`;
+          const l=p.estado==='conforme'?'C':p.estado==='nc'?'NC('+(Number(p.cantNC)||0)+')':'○';
+          const obs=(p.obs||[]).map(o=>`<div class="pt-obs">→ ${escHtml(o)}</div>`).join('');
+          return `<div class="insp-pt-row"><span class="pt-est" style="color:${c}">${l}</span><span class="pt-nom">${escHtml(p.punto)}</span></div>${obs}`;
         }).join('');
         return `<div class="insp-item">
           <div class="insp-meta">
             <span class="insp-estado" style="color:${col}">● ${lbl}</span>
-            ${ins.totalNC>0?`<span class="chip ng">${ins.totalNC} NC</span>`:''}
+            ${ins.totalNC>0?`<span class="chip ng">${Number(ins.totalNC)||0} NC</span>`:''}
           </div>
-          <div class="insp-fecha">${fecha} — ${ins.inspector}</div>
+          <div class="insp-fecha">${escHtml(fecha)} — ${escHtml(ins.inspector)}</div>
           <div class="insp-pts">${pts}</div>
-          <button class="btn-del" onclick="confirmarEliminar('${ins.idRuta}','${tipo}')">🗑 Eliminar esta inspección</button>
+          <button class="btn-del" onclick="confirmarEliminar('${esc(ins.idRuta)}','${tipo}')">🗑 Eliminar esta inspección</button>
         </div>`;
       }).join('')}
     </div>`).join('');
@@ -1477,7 +1506,8 @@ async function generarPDFParaEliminar(idRuta) {
 // ════════════════════════════════════════════
 // UTILS
 // ════════════════════════════════════════════
-function esc(s){ return (s||'').replace(/'/g,"\\'"); }
+// esc(): para valores interpolados dentro de handlers inline ('...') — JS-escape + HTML-escape
+function esc(s){ return escHtml(escJs(s)); }
 
 function comprimirImg(file,quality,maxW,cb){
   const reader=new FileReader();
